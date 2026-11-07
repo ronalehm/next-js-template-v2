@@ -8,9 +8,11 @@
       "Bash(*spec-approval.key*)",
       "Bash(*spec-privileged*)",
       "Bash(claude *)",
+      "Bash(*spec-approval*record*)",
       "PowerShell(*spec-approval.key*)",
       "PowerShell(*spec-privileged*)",
-      "PowerShell(claude *)"
+      "PowerShell(claude *)",
+      "PowerShell(*spec-approval*record*)"
     ],
     "ask": [
       "Edit(/.claude/hooks/**)",

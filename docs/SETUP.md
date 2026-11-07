@@ -240,7 +240,8 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
 | Comando en el chat | `apruebo docs/specs/<slug>.md` | `autorizo gobierno docs/specs/<slug>.md` |
 | Autoriza | La `Fase actual` de la spec y las rutas de `## Archivos sensibles` | Editar las rutas de `## Cambios de gobierno`, solo en esa sesión, durante 2 horas |
 | Nunca autoriza | Archivos de gobierno, aunque la spec los cite | Registros de aprobación ni rutas no listadas |
-| Se invalida si | Cambia la spec, incluida `Fase actual`, se usa en otro checkout o termina el plan | Lo anterior, otra sesión, caducidad o una aprobación posterior |
+| Firma SSH del usuario | `docs/specs/<slug>.md.sig` sobre raíz, spec, hash y fase | `docs/specs/<slug>.md.gov.sig` sobre raíz, spec, hash, fase, sesión, rutas, operación y caducidad, con cabecera propia |
+| Se invalida si | Cambia la spec, incluida `Fase actual`, se usa en otro checkout o termina el plan | Lo anterior, otra sesión, caducidad, una aprobación posterior o falta su firma |
 
 - **Gobierno:** `.claude/` salvo `plans/`, `projects/` y `worktrees/`; `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `.mcp.json`, `docs/SETUP.md`.
 - **Nunca editables por un agente:** `docs/specs/approvals.jsonl`, `~/.claude/spec-privileged.jsonl`, `~/.claude/spec-approval.key`, `.git/`.
@@ -248,7 +249,12 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
 - Una spec con todas las tareas de `## Plan` marcadas deja de autorizar rutas protegidas. Desmarcar casillas de una spec aprobada se bloquea.
 - **Confirmación externa:** el comando en el chat y su HMAC no prueban consentimiento humano: `claude -p` también los produce. Una aprobación solo vale con una firma SSH de la declaración de la spec, hecha por el usuario en su terminal con una clave protegida por frase o por llave de hardware, sin cargarla en `ssh-agent`:
   1. Una vez: `ssh-keygen -t ed25519 -f ~/.ssh/spec_approval`, y en `~/.claude/spec-allowed-signers` la línea `approver namespaces="spec-approval" <contenido de spec_approval.pub>`.
-  2. Cada aprobación, tras `apruebo`, en Git Bash desde la raíz del repo (en PowerShell 5.1 la tubería falla): `echo {} | node .claude/hooks/spec-approval.mjs statement docs/specs/<slug>.md | ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval > docs/specs/<slug>.md.sig`.
+  2. Cada aprobación, tras `apruebo`, en Git Bash desde la raíz del repo, no en PowerShell: el comando exacto que imprime el hook. Usa `node.exe` (el alias `node` de Git Bash pasa por `winpty` y rompe la tubería), escribe la declaración en un archivo temporal, aborta si `node.exe` falla o la declaración sale vacía, firma solo ese archivo y reemplaza `docs/specs/<slug>.md.sig` solo si la firma verifica contra `~/.claude/spec-allowed-signers`. Si algo falla imprime `ERROR: firma no creada` y la `.sig` anterior queda intacta:
+
+     ```bash
+     s=$(mktemp) && echo {} | node.exe .claude/hooks/spec-approval.mjs statement docs/specs/<slug>.md > "$s" && test -s "$s" && cat "$s" && ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval "$s" && ssh-keygen -Y verify -f ~/.claude/spec-allowed-signers -I approver -n spec-approval -s "$s.sig" < "$s" && mv "$s.sig" docs/specs/<slug>.md.sig && echo "Firma verificada: docs/specs/<slug>.md.sig" || echo "ERROR: firma no creada; docs/specs/<slug>.md.sig sin cambios" >&2; rm -f "$s" "$s.sig"
+     ```
+  3. Cada autorización de gobierno, tras `autorizo gobierno`, igual: el hook imprime el comando, que añade `gobierno <session_id>` a `statement` y escribe `docs/specs/<slug>.md.gov.sig`. Solo firma la solicitud de esa sesión. Muestra la declaración antes de firmar: comprueba que `sesion:` coincide con la de `/status` y revisa `rutas:` y `caduca:`. Hasta esa firma, `autorizo gobierno` solo registra una solicitud y no desbloquea nada; ejecutar `record` desde un script o una copia del hook tampoco.
 - Ninguna aprobación de spec autoriza desplegar, borrar datos ni migrar producción: eso requiere una orden expresa.
 
 **Riesgos residuales:** estos controles evitan desvíos de un agente; no aíslan frente a un proceso local con los mismos permisos.
@@ -259,6 +265,9 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
 - Un proceso del mismo usuario puede reemplazar `~/.claude/spec-allowed-signers` o el hook por shell. La firma impide falsificar consentimiento mientras esos archivos sigan íntegros; solo un archivo de administrador o una verificación en servidor lo garantizan.
 - Los hooks de frontmatter no corren en una carpeta sin confianza aceptada, y `claude -p` no la pide. Los controles de gobierno viven en `.claude/settings.json`.
 - Sin firma, una aprobación no desbloquea nada. `relay` y el `deny` sobre `claude` bloquean el comando literal, no un texto codificado ni un script que lance otra sesión.
+- `relay` y el `deny` también bloquean ejecutar el modo `record` del hook desde la terminal. Es una defensa adicional, no el control: una copia con otro nombre o un comando codificado los evita, pero sin la firma del usuario la solicitud no desbloquea nada.
+  Bloquea también comandos legítimos que mencionen ambos, como `grep record` sobre el hook: usar Grep o Read.
+- La declaración de gobierno se firma tal como la imprime el hook. Si el agente cambiara el comando al transmitirlo, o un proceso con la clave HMAC añadiera una solicitud con otras rutas, el usuario lo vería al firmar: comparar `sesion:` con `/status` y revisar `rutas:` es su control.
 - En una sesión de escritorio con worktree corre la copia del hook del checkout principal. Si esa copia ya incluye la comprobación de integridad y difiere de la del worktree, bloquea; una copia anterior no lo detecta.
 - Mientras una spec con su plan abierto liste una ruta sensible, `Modo: build` puede editarla: el hook no conoce la tarea. `reviewer` lo revisa en el diff.
 - Las únicas capas fuera del alcance del usuario local son `managed-settings.json`, protegido por administrador, y reglas del servidor Git.

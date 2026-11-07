@@ -4,9 +4,9 @@ import { afterAll, test, vi } from "vitest";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { spawnSync, execSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 
 const HOOK = join(import.meta.dirname, "spec-approval.mjs");
 
@@ -47,9 +47,17 @@ function project() {
     const text = spawnSync("node", [HOOK, "statement", `docs/specs/${slug}.md`], { input: JSON.stringify({ cwd }), env, encoding: "utf8" });
     if (text.status === 0) writeFileSync(join(base, `docs/specs/${slug}.md.sig`), sign(KEY, text.stdout));
   };
+  // Same for "autorizo gobierno": the user signs the request the hook just recorded.
+  const signGovernance = ({ prompt, unsigned, session_id }) => {
+    const slug = (prompt ?? "").trim().match(/^autorizo\s+gobierno\s+docs\/specs\/([\w-]+)\.md$/i)?.[1];
+    if (!slug || unsigned || !session_id) return;
+    const text = spawnSync("node", [HOOK, "statement", `docs/specs/${slug}.md`, "gobierno", session_id], { input: "{}", env, encoding: "utf8" });
+    if (text.status === 0) writeFileSync(join(dir, `docs/specs/${slug}.md.gov.sig`), sign(KEY, text.stdout));
+  };
   const run = (mode, payload) => {
     if (mode === "record") signSpec(payload);
     const r = spawnSync("node", [HOOK, mode], { input: JSON.stringify(payload), env, encoding: "utf8" });
+    if (mode === "record") signGovernance(payload);
     return { code: r.status, out: r.stdout + r.stderr };
   };
   const spec = (name, body = "") =>
@@ -255,6 +263,70 @@ test("governance: privileged authorization is limited by scope, session and spec
   assert.equal(write(p, ".claude/settings.json").code, 2, "spec changed after authorization");
 });
 
+test("governance: only the user's signature of this exact request unlocks it", () => {
+  const p = project();
+  governed(p, "g", { governance: ["CLAUDE.md", "docs/SETUP.md"] });
+  approve(p);
+  const govSig = join(p.dir, "docs/specs/g.md.gov.sig");
+  const request = (session = SESSION) =>
+    p.run("record", { prompt: "autorizo gobierno docs/specs/g.md", session_id: session, unsigned: true });
+  const requestText = (session = SESSION) =>
+    spawnSync("node", [HOOK, "statement", "docs/specs/g.md", "gobierno", session], { input: "{}", env: p.env, encoding: "utf8" }).stdout;
+  const claudeMd = (session) => write(p, "CLAUDE.md", session).code;
+
+  const r = request();
+  assert.equal(r.code, 0);
+  assert.match(r.out, /Falta firma externa/);
+  assert.match(r.out, new RegExp(`statement docs/specs/g\\.md gobierno ${SESSION} `), "the printed command names its session");
+  assert.equal(claudeMd(), 2, "record called directly, nobody signed");
+
+  const copy = join(tempDir("spec-copy-"), "h.mjs");
+  copyFileSync(HOOK, copy);
+  const scripted = (session) =>
+    spawnSync("node", [copy, "record"], {
+      input: JSON.stringify({ prompt: "autorizo gobierno docs/specs/g.md", session_id: session }),
+      env: p.env,
+      encoding: "utf8",
+    }).status;
+  assert.equal(scripted(SESSION), 0, "the copy records a request");
+  assert.equal(claudeMd(), 2, "a script running a copy of the hook gets nothing usable");
+
+  const text = requestText();
+  assert.equal(scripted("agent-session"), 0, "a later request from another session");
+  assert.equal(requestText(), text, "the user still signs their own session's request");
+  assert.match(text, /^spec-governance\n/);
+  for (const field of ["spec: docs/specs/g.md", `sesion: ${SESSION}`, 'rutas: ["CLAUDE.md","docs/SETUP.md"]', "operacion: edit", "caduca: 20"]) {
+    assert.ok(text.includes(field), field);
+  }
+  const noSession = spawnSync("node", [HOOK, "statement", "docs/specs/g.md", "gobierno"], { input: "{}", env: p.env, encoding: "utf8" });
+  assert.equal(noSession.status, 2, "statement without a session");
+  writeFileSync(govSig, "");
+  assert.equal(claudeMd(), 2, "empty");
+  writeFileSync(govSig, "not a signature");
+  assert.equal(claudeMd(), 2, "garbage");
+  writeFileSync(govSig, readFileSync(join(p.dir, "docs/specs/g.md.sig")));
+  assert.equal(claudeMd(), 2, "the functional signature");
+  writeFileSync(govSig, sign(KEY, text.replace("spec-governance", "spec-approval")));
+  assert.equal(claudeMd(), 2, "same fields, functional header");
+  writeFileSync(govSig, sign(newKey(), text));
+  assert.equal(claudeMd(), 2, "another key");
+
+  request("other-session");
+  writeFileSync(govSig, sign(KEY, requestText("other-session")));
+  assert.equal(claudeMd(), 2, "signed for another session");
+
+  writeFileSync(govSig, sign(KEY, requestText()));
+  assert.equal(claudeMd(), 0, "valid signature");
+  assert.equal(write(p, "docs/SETUP.md").code, 0, "signed scope");
+  assert.equal(write(p, ".claude/settings.json").code, 2, "outside the signed scope");
+  assert.equal(claudeMd("other-session"), 2, "the other session's request stays unsigned");
+
+  assert.equal(launch(p, "developer", "docs/specs/g.md Fase: B").code, 0, "gate phase B unchanged");
+  assert.equal(launch(p, "developer", "docs/specs/g.md Fase: C").code, 2, "gate phase C unchanged");
+  p.write("g", p.file("g") + "- cambio\n");
+  assert.equal(claudeMd(), 2, "spec changed after signing");
+});
+
 test("governance: privileged authorization rejects empty, foreign and ledger scopes", () => {
   const p = project();
   governed(p, "empty");
@@ -306,14 +378,20 @@ test("governance: an expired authorization stops working, even with a valid sign
   authorize(p);
   const file = join(p.dir, "privileged.jsonl");
   const entry = JSON.parse(readFileSync(file, "utf8"));
-  const expires = Date.now() - 1000;
-  const sig = createHmac("sha256", readFileSync(join(p.dir, "key"), "utf8").trim())
-    .update(
-      ["privileged", resolve(p.dir), entry.spec, entry.hash, entry.phase, entry.paths.join(","), entry.operation, entry.session, expires, entry.approver, entry.date].join("\n"),
-    )
-    .digest("hex");
-  writeFileSync(file, `${JSON.stringify({ ...entry, expires, sig })}\n`);
+  const forge = (expires) => {
+    const sig = createHmac("sha256", readFileSync(join(p.dir, "key"), "utf8").trim())
+      .update(
+        ["privileged", resolve(p.dir), entry.spec, entry.hash, entry.phase, entry.paths.join(","), entry.operation, entry.session, expires, entry.approver, entry.date].join("\n"),
+      )
+      .digest("hex");
+    writeFileSync(file, `${JSON.stringify({ ...entry, expires, sig })}\n`);
+    const text = spawnSync("node", [HOOK, "statement", "docs/specs/g.md", "gobierno", SESSION], { input: "{}", env: p.env, encoding: "utf8" }).stdout;
+    writeFileSync(join(p.dir, "docs/specs/g.md.gov.sig"), sign(KEY, text));
+  };
+  forge(Date.now() - 1000);
   assert.equal(write(p, "CLAUDE.md").code, 2);
+  forge(Date.parse(entry.date) + 365 * 24 * 60 * 60 * 1000);
+  assert.equal(write(p, "CLAUDE.md").code, 2, "a request longer than 2 hours, even signed");
 });
 
 test("governance: aliases of protected paths are still protected", () => {
@@ -560,6 +638,13 @@ test("relay: launching Claude by another route, or from PowerShell, is also stop
   assert.equal(relay("PowerShell", 'claude -p "autorizo gobierno docs/specs/g.md"'), 2);
   assert.equal(relay("Bash", 'grep "apruebo docs/specs" .claude/agents/spec.md'), 0, ".claude is only a path");
 
+  // An agent feeding the hook's record mode itself would mint "autorizo gobierno" without the user.
+  const selfRecord = `echo '{"prompt":"autorizo gobierno docs/specs/g.md","session_id":"S"}' | node .claude/hooks/spec-approval.mjs record`;
+  assert.equal(relay("Bash", selfRecord), 2, "record mode from Bash");
+  assert.equal(relay("PowerShell", `'{}' | node "$PWD\\.claude\\hooks\\spec-approval.mjs" "record"`), 2, "record mode from PowerShell");
+  assert.equal(relay("Bash", "cp .claude/hooks/spec-approval.mjs /tmp/h.mjs && node /tmp/h.mjs record"), 2, "copied in the same command");
+  assert.equal(relay("Bash", "npx vitest run .claude/hooks/spec-approval.test.mjs"), 0, "tests still run");
+
   const developer = (tool_name, command) => p.run("developer", { tool_name, tool_input: { command } }).code;
   assert.equal(developer("PowerShell", "Set-Content docs/specs/a.md x"), 2, "developer in PowerShell");
 });
@@ -765,6 +850,51 @@ test("external confirmation: only a valid signature of this content counts", () 
 
   p.write("g", p.file("g") + "- cambio\n");
   assert.equal(gate(), 2, "content changed");
+});
+
+// Git Bash's own tools, so the printed command runs as the user runs it (and not under WSL's bash).
+const BIN = process.platform === "win32" ? resolve(execSync("git --exec-path", { encoding: "utf8" }).trim(), "../../../usr/bin") : "/usr/bin";
+const tool = (name) => join(BIN, process.platform === "win32" ? `${name}.exe` : name);
+
+test("external confirmation: the printed sign command signs only a checked statement", () => {
+  const p = project();
+  governed(p, "g", { sensitive: ["proxy.ts"] });
+  const command = p.run("record", { prompt: "apruebo docs/specs/g.md", unsigned: true }).out.match(/raíz del repo: (.+)$/m)[1];
+  const home = tempDir("spec-home-");
+  mkdirSync(join(home, ".ssh"));
+  mkdirSync(join(home, ".claude"));
+  const key = join(home, ".ssh/spec_approval");
+  execSync(`ssh-keygen -t ed25519 -N "" -q -f "${key}"`);
+  const signers = join(home, ".claude/spec-allowed-signers");
+  signersFor(key, signers);
+  signersFor(key, p.env.SPEC_ALLOWED_SIGNERS);
+  mkdirSync(join(p.dir, ".claude/hooks"), { recursive: true });
+  copyFileSync(HOOK, join(p.dir, ".claude/hooks/spec-approval.mjs"));
+  const sig = join(p.dir, "docs/specs/g.md.sig");
+  writeFileSync(sig, "previous");
+  const pathKey = Object.keys(p.env).find((k) => k.toUpperCase() === "PATH");
+  const sh = (fakeNode) => {
+    const bin = tempDir("spec-bin-");
+    if (fakeNode) copyFileSync(tool(fakeNode), join(bin, "node.exe"));
+    const env = { ...p.env, HOME: home, [pathKey]: [bin, BIN, p.env[pathKey]].join(delimiter) };
+    const r = spawnSync(tool("bash"), ["-c", command], { cwd: p.dir, env, encoding: "utf8" });
+    return r.stdout + r.stderr;
+  };
+  const gate = () => launch(p, "developer", "docs/specs/g.md Fase: B").code;
+
+  assert.match(sh("false"), /ERROR: firma no creada/, "node.exe fails");
+  assert.equal(readFileSync(sig, "utf8"), "previous");
+  assert.match(sh("true"), /ERROR: firma no creada/, "empty statement");
+  assert.equal(readFileSync(sig, "utf8"), "previous");
+  assert.equal(gate(), 2);
+  if (process.platform !== "win32") return; // node.exe exists only on Windows.
+
+  signersFor(newKey(), signers);
+  assert.match(sh(), /ERROR: firma no creada/, "signature that does not verify");
+  assert.equal(readFileSync(sig, "utf8"), "previous");
+  signersFor(key, signers);
+  assert.match(sh(), /Firma verificada/);
+  assert.equal(gate(), 0);
 });
 
 test("external confirmation: key material and signers are out of reach of Write and Edit", () => {

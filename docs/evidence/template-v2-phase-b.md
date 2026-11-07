@@ -4,6 +4,71 @@ Registro de cambios propuestos, pruebas y riesgos residuales. Spec: `docs/specs/
 
 **Estado: FASE B COMPLETADA — VALIDACIÓN LOCAL (2026-11-07).** `fix-1` aplicada, R4 y R7 corregidos y probados en sesión real, y aprobación con firma SSH externa del usuario verificada por `gate`. Riesgos aceptados en "Cierre de Fase B". Sin commit. Checkout principal sin modificar.
 
+**Revisión del PR #1 (2026-11-07):** `fix-2` y `fix-2b` aplicadas por el usuario a mano sobre `792bcb2`. Validación local PASS; sin commit.
+
+## Reparación tras la revisión del PR #1: fix-2 y fix-2b (2026-11-07)
+
+Aplicadas a mano por el usuario en el worktree, sobre `792bcb2` sin modificarlo. El agente no editó archivos de gobierno: preparó los parches en una copia aislada y el usuario los aplicó.
+
+| Parche | SHA-256 | Corrige |
+|---|---|---|
+| `docs/patches/template-v2-phase-b-fix-2.patch` | `b50cf232be82e363136275f6914846eb8d0ef30ac30273b2a30c31233da8acd3` | El comando de firma podía firmar una entrada vacía si `node` fallaba. `relay` y `deny` no detectaban el modo `record` del hook lanzado desde la terminal. |
+| `docs/patches/template-v2-phase-b-fix-2b.patch` | `fe883a1d46270bc5bc95d83d2d5f154ebe67205868cb96f0ad1e1a77d427fa53` | Autoautorización de gobierno: `autorizo gobierno` no exigía firma propia. Sustitución de la solicitud firmada por la de otra sesión. Caducidad sin tope. |
+
+### Hallazgos que motivaron la reparación
+
+1. **Firma de entrada vacía (usuario).**
+   - Problema: `echo {} | node … | ssh-keygen -Y sign > .sig` firmaba una entrada vacía cuando `node` fallaba, por ejemplo con el alias `winpty` de Git Bash.
+   - Corrección: el comando nuevo usa `node.exe` y escribe la declaración en un archivo temporal. Aborta si la salida es distinta de 0 o la declaración está vacía. Muestra la declaración, firma ese archivo y verifica la firma contra `~/.claude/spec-allowed-signers`. Solo entonces reemplaza la `.sig`. Si algo falla, imprime `ERROR: firma no creada`.
+2. **Autoautorización (reviewer, BLOQUEANTE, reproducido).**
+   - Problema: un agente podía ejecutar `node .claude/hooks/spec-approval.mjs record` con `autorizo gobierno …` desde Bash. Eso creaba una autorización privilegiada válida, y `guard CLAUDE.md` pasaba de exit 2 a 0.
+   - Mitigación en fix-2: `relay` y `deny` bloquean ese comando.
+   - Corrección de raíz en fix-2b: `autorizo gobierno` solo registra una solicitud. `hasPrivilege` exige además una firma SSH del usuario en `docs/specs/<slug>.md.gov.sig`. La firma cubre una declaración con cabecera propia `spec-governance` y los campos raíz, spec, hash, fase, sesión, rutas, operación y caducidad.
+3. **Sustitución de sesión (reviewer, BLOQUEANTE, reproducido).**
+   - Problema: `statement … gobierno` tomaba la última solicitud de la spec. Un agente podía registrar después otra solicitud de la sesión B con una copia del hook, y el usuario la firmaba creyendo que era la suya.
+   - Corrección: el comando impreso fija la sesión (`statement <spec> gobierno <session_id>`) y `printStatement` filtra por ella; sin sesión se bloquea. Las líneas de la declaración llevan etiqueta (`sesion:`, `rutas:`, `caduca:` en ISO). `hasPrivilege` limita la vigencia a 2 horas desde la solicitud.
+
+La tercera revisión independiente, sobre fix-2 + fix-2b, dio APROBADO, sin bloqueantes.
+
+### Validación en el worktree con fix-2 + fix-2b aplicadas
+
+| Comprobación | Resultado |
+|---|---|
+| Rama `claude/claude-code-template-v2-3b4094`, HEAD `792bcb2` | PASS |
+| Contenido idéntico a la copia revisada (4 archivos, +199/−24) | PASS |
+| `git diff --check` | PASS |
+| `npx vitest run .claude/hooks` | PASS, 47/47 |
+| `npm run lint` | PASS |
+| `npm run build` | PASS |
+| `gate` Fase B, firma real del usuario | PASS, exit 0 |
+| `gate` Fase C | PASS, exit 2 |
+| `guard`: `CLAUDE.md`, `.claude/settings.json`, hook, `docs/SETUP.md`, `approvals.jsonl`, `~/.claude/spec-allowed-signers`, `~/.ssh/spec_approval` | PASS, exit 2 en todas |
+| `guard` sobre `README.md`, ruta no protegida | PASS, exit 0 |
+| `relay`: modo `record` del hook desde Bash; `claude -p "autorizo gobierno …"` desde PowerShell | PASS, exit 2 |
+| `ssh-keygen -Y verify` de la `.sig` real sobre la declaración de Fase B | PASS, `Good "spec-approval" signature`, clave `SHA256:7AY56U4A0G/3OgsDGsxNf93xujvfn4y5CS5FJGGE1to` |
+| `statement … gobierno` sin sesión | PASS, exit 2 |
+| Autoautorización sin firma (repo temporal) | PASS: la solicitud se registra y `guard CLAUDE.md` sigue en exit 2 |
+| Aislamiento de sesiones A/B (repo temporal, clave desechable) | PASS: si el usuario firma A, A da 0 y B da 2; B solo se desbloquea si se firma expresamente su declaración (`sesion: B`) |
+| Pruebas de mutación: hook antiguo; sin verificar `.gov.sig`; sin filtro de sesión; sin tope de 2 h | PASS: el test correspondiente falla en cada caso |
+| Búsqueda de secretos en el diff y los parches | PASS, nada encontrado |
+
+Ninguna prueba usó la clave privada del usuario ni escribió en su ledger privilegiado. Las pruebas de autorización corrieron en repos temporales con claves desechables.
+
+### Limitaciones (NO VERIFICADO)
+
+- El comando de firma de gobierno no se ejecutó de principio a fin con la clave real del usuario. El de firma funcional sí se probó en Git Bash real con una clave desechable, y el de gobierno usa el mismo constructor.
+- Las reglas nuevas de `deny`, `Bash(*spec-approval*record*)` y `PowerShell(*spec-approval*record*)`, no se probaron en una sesión real del harness. `relay` sí se probó.
+- Las sesiones de escritorio usan la copia del hook del checkout principal hasta que se integre este cambio.
+- Los riesgos residuales declarados en `docs/SETUP.md` siguen vigentes, entre ellos un proceso del mismo usuario que reemplace el hook o el archivo de firmantes, o que lea la clave HMAC.
+
+### Excepción de whitespace para los parches
+
+`git diff --cached --check` daba avisos de "trailing whitespace" en `fix-2.patch` y `fix-2b.patch`. Son líneas de contexto en blanco que el formato diff escribe con un espacio inicial; los parches de `792bcb2` tienen el mismo caso. Quitar ese espacio cambiaría el SHA-256 registrado y haría fallar `git apply`. Por eso `.gitattributes` añade solo `docs/patches/*.patch -whitespace`, sin tocar el contenido de los parches ni desactivar la comprobación en el resto del repositorio.
+
+### Archivo accidental
+
+En la raíz del worktree hay un archivo `cd` sin seguimiento en git, de 306 bytes, con la salida de `ps` de las 14:50. No contiene secretos. No es del agente, no se ha borrado y no debe entrar en el commit.
+
 ## Cierre de Fase B (T8, 2026-11-07)
 
 | Verificación | Resultado | Observado |

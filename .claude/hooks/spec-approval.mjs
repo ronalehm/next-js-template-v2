@@ -3,6 +3,9 @@
 //     and appends { spec, hash, phase, approver, date, sig } to docs/specs/approvals.jsonl.
 //     "autorizo gobierno docs/specs/<slug>.md" is the privileged authorization: it unlocks the paths listed in
 //     `## Cambios de gobierno` for this session, phase and spec content, and needs a valid functional approval first.
+//     It only records a request: it unlocks nothing until the user signs its own statement (header spec-governance,
+//     root, spec, hash, phase, session, paths, operation, expiry) into <spec>.gov.sig, so running record from a
+//     script, a copy of this hook or another session never yields a usable authorization.
 //     Signatures use an HMAC with a per-machine key kept outside the repo (~/.claude/spec-approval.key), a separate
 //     domain per approval type and the repo root, so hand-written lines, replays and copies to other checkouts fail.
 //     Ceiling: any process running as this OS user can read the key; settings.json denies Claude's file tools on it,
@@ -135,15 +138,32 @@ const lastApproval = (spec) => {
 
 // What the user signs in their own terminal. The state value and ticks are outside the hash, so it can be signed before or after "apruebo".
 const statement = (spec, text) => `spec-approval\n${root}\n${spec}\n${hash(text)}\n${phase(text)}\n`;
-const signCommand = (spec) =>
-  `echo {} | node .claude/hooks/spec-approval.mjs statement ${spec} | ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval > ${spec}.sig`;
+// What the user signs to grant one privileged authorization. Its own header keeps a functional signature from matching;
+// labelled lines let the user check session, paths and expiry before signing.
+const govStatement = (e) =>
+  `spec-governance\nraiz: ${root}\nspec: ${e.spec}\nhash: ${e.hash}\nfase: ${e.phase}\nsesion: ${e.session}\n` +
+  `rutas: ${JSON.stringify(e.paths)}\noperacion: ${e.operation}\ncaduca: ${new Date(e.expires).toISOString()}\n`;
+const SESSION_ID = /^[\w-]+$/;
+// Signs a checked, non-empty statement file, never a pipe: a failing node would otherwise sign empty input.
+// node.exe skips Git Bash's winpty alias for node. It shows what is signed, and replaces the .sig only after it verifies.
+// A governance signature names its session, so a later request from another session cannot take its place.
+const signCommand = (spec, session = null) => {
+  const target = `${spec}${session ? ".gov" : ""}.sig`;
+  return (
+    `s=$(mktemp) && echo {} | node.exe .claude/hooks/spec-approval.mjs statement ${spec}${session ? ` gobierno ${session}` : ""} > "$s" && test -s "$s" && cat "$s"` +
+    ` && ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval "$s"` +
+    ` && ssh-keygen -Y verify -f ~/.claude/spec-allowed-signers -I approver -n spec-approval -s "$s.sig" < "$s"` +
+    ` && mv "$s.sig" ${target} && echo "Firma verificada: ${target}" || echo "ERROR: firma no creada; ${target} sin cambios" >&2;` +
+    ` rm -f "$s" "$s.sig"`
+  );
+};
 
-function humanSigned(spec, text) {
-  const sig = resolve(root, `${spec}.sig`);
+function sshVerified(sigFile, text) {
+  const sig = resolve(root, sigFile);
   if (!existsSync(signersPath) || !existsSync(sig)) return false;
   try {
     execFileSync("ssh-keygen", ["-Y", "verify", "-f", signersPath, "-I", "approver", "-n", "spec-approval", "-s", sig], {
-      input: statement(spec, text),
+      input: text,
       stdio: ["pipe", "ignore", "ignore"],
     });
     return true;
@@ -151,6 +171,7 @@ function humanSigned(spec, text) {
     return false;
   }
 }
+const humanSigned = (spec, text) => sshVerified(`${spec}.sig`, statement(spec, text));
 
 const isValid = (spec, text) => isApproved(text) && lastApproval(spec)?.hash === hash(text) && humanSigned(spec, text);
 
@@ -220,7 +241,7 @@ function authorize(slug) {
   for (const path of paths) {
     if (NEVER.test(path) || !GOVERNANCE.test(path)) block(`"${path}" no se puede autorizar: no es un archivo de gobierno editable.`);
   }
-  if (!input.session_id) block("la autorización de gobierno requiere una sesión identificada.");
+  if (!SESSION_ID.test(input.session_id ?? "")) block("la autorización de gobierno requiere una sesión identificada.");
   const entry = {
     spec,
     hash: hash(text),
@@ -236,8 +257,9 @@ function authorize(slug) {
   mkdirSync(dirname(privilegedPath), { recursive: true });
   appendFileSync(privilegedPath, `${JSON.stringify(entry)}\n`);
   console.log(
-    `Autorización de gobierno de ${entry.approver} para ${spec}, fase "${entry.phase}", operación edit, solo esta sesión, ` +
-      `válida 2 horas. Rutas: ${paths.join(", ")}. Si cambia la spec, deja de valer.`,
+    `Autorización de gobierno de ${entry.approver} registrada para ${spec}, fase "${entry.phase}", operación edit, solo esta sesión, ` +
+      `válida 2 horas. Rutas: ${paths.join(", ")}. Si cambia la spec, deja de valer. ` +
+      `Falta firma externa: no edites gobierno. El usuario debe ejecutar en Git Bash, no en PowerShell, desde la raíz del repo: ${signCommand(spec, entry.session)}`,
   );
 }
 
@@ -326,7 +348,9 @@ function hasPrivilege(rel) {
       Boolean(input.session_id) &&
       entry.session === input.session_id &&
       Date.now() < entry.expires &&
-      specStillAuthorizes(entry),
+      entry.expires - Date.parse(entry.date) <= PRIVILEGED_TTL_MS &&
+      specStillAuthorizes(entry) &&
+      sshVerified(`${entry.spec}.gov.sig`, govStatement(entry)),
   );
 }
 
@@ -448,17 +472,27 @@ function relay() {
   const command = (text) => APPROVE.test(text.trim()) || AUTHORIZE.test(text.trim());
   const launchesClaude = (text) =>
     /(?<!\.)claude(?!(\.local)?\.md)/i.test(text) && /(apruebo|autorizo\s+gobierno)\s+\S*docs[\\/]specs/i.test(text);
+  // Running the hook's record mode from a shell would write a ledger entry nobody typed, including "autorizo gobierno".
+  const recordsByHand = (text) => /spec-approval/i.test(text) && /\brecord\b/i.test(text);
   const shell = /^(Bash|PowerShell|mcp__terminal__)/.test(input.tool_name ?? "");
-  if (values.some(command) || (shell && values.some(launchesClaude))) {
+  if (values.some(command) || (shell && values.some((text) => launchesClaude(text) || recordsByHand(text)))) {
     block(`${input.tool_name} no puede enviar una aprobación: solo el usuario la escribe en el chat.`);
   }
 }
 
-// Prints what the user signs. Reads nothing secret.
+// Prints what the user signs. With "gobierno <session>", that session's latest privileged request for the spec here.
 function printStatement() {
   const spec = slashes(process.argv[3] ?? "");
   if (!/^docs\/specs\/[\w-]+\.md$/.test(spec) || !existsSync(resolve(root, spec))) block(`la spec ${spec} no existe.`);
-  process.stdout.write(statement(spec, read(spec)));
+  if (process.argv[4] !== "gobierno") return process.stdout.write(statement(spec, read(spec)));
+  const session = process.argv[5] ?? "";
+  if (!SESSION_ID.test(session)) block(`indica la sesión: statement ${spec} gobierno <session_id>.`);
+  const k = key();
+  const entry = lines(privilegedPath)
+    .filter((e) => e.spec === spec && e.session === session && signed(k, privilegedFields(e), e.sig))
+    .at(-1);
+  if (!entry) block(`no hay autorización de gobierno registrada para ${spec} en la sesión ${session} de este checkout.`);
+  process.stdout.write(govStatement(entry));
 }
 
 const mode = { record, gate, guard, developer, orchestrator, relay, statement: printStatement }[process.argv[2]];
