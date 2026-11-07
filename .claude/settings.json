@@ -3,10 +3,29 @@
     "deny": [
       "Read(~/.claude/spec-approval.key)",
       "Edit(~/.claude/spec-approval.key)",
-      "Write(~/.claude/spec-approval.key)",
-      "Edit(docs/specs/approvals.jsonl)",
-      "Write(docs/specs/approvals.jsonl)",
-      "Bash(*spec-approval.key*)"
+      "Edit(~/.claude/spec-privileged.jsonl)",
+      "Edit(/docs/specs/approvals.jsonl)",
+      "Bash(*spec-approval.key*)",
+      "Bash(*spec-privileged*)",
+      "Bash(claude *)",
+      "Bash(*spec-approval*record*)",
+      "PowerShell(*spec-approval.key*)",
+      "PowerShell(*spec-privileged*)",
+      "PowerShell(claude *)",
+      "PowerShell(*spec-approval*record*)"
+    ],
+    "ask": [
+      "Edit(/.claude/hooks/**)",
+      "Edit(/.claude/agents/**)",
+      "Edit(/.claude/rules/**)",
+      "Edit(/.claude/skills/**)",
+      "Edit(/.claude/commands/**)",
+      "Edit(/.claude/settings*.json)",
+      "Edit(/CLAUDE.md)",
+      "Edit(/CLAUDE.local.md)",
+      "Edit(/AGENTS.md)",
+      "Edit(/.mcp.json)",
+      "Edit(/docs/SETUP.md)"
     ]
   },
   "hooks": {
@@ -22,20 +41,32 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Agent|Task",
+        "matcher": "Agent",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-approval.mjs\" gate"
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-approval.mjs\" gate",
+            "onFailure": "block"
           }
         ]
       },
       {
-        "matcher": "Write|Edit|MultiEdit",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-approval.mjs\" guard"
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-approval.mjs\" guard",
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|SendMessage|Bash|PowerShell|CronCreate|RemoteTrigger|mcp__ccd_session_mgmt__send_message|mcp__ccd_session__start_session|mcp__ccd_session__hand_off_to_session|mcp__scheduled-tasks__.*|mcp__terminal__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-approval.mjs\" relay",
+            "onFailure": "block"
           }
         ]
       }

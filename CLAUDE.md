@@ -6,8 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Base template for Ronald's projects. Spanish is the working language.
 
-**The parent `../CLAUDE.md` (Astro project) does NOT apply here.** This repo is a separate Next.js app nested inside that folder; ignore its Astro/`astro dev` instructions.
-
 ## Commands
 
 ```sh
@@ -32,14 +30,14 @@ Read `docs/SETUP.md` before writing code. It is the source of truth for:
 
 | Agent | Role |
 |---|---|
-| `orchestrator` | Classifies each request as **build** (small, clear change: ≤ 3 files, no new routes/API contracts) or **SDD**; plans, delegates, runs tasks in parallel when files don't overlap. Never writes code. |
+| `orchestrator` | Classifies each request as READ-ONLY, BUILD, SDD-LITE or SDD-ADVANCED (see `docs/SETUP.md` §3); plans, delegates, runs tasks in parallel when files don't overlap. Never writes code. |
 | `spec` | Writes `docs/specs/<module>-<feature>.md` with a task plan (≤ 5 tasks / ~15 files per phase). Never approves specs. |
 | `developer` | Implements an approved spec task or a build-mode change, with tests. Checks `Estado: aprobado` before touching files; never modifies `docs/specs/` (enforced by a hook in its frontmatter). |
-| `reviewer` | Read-only. Validates against the spec/task and `docs/SETUP.md`; returns APROBADO or numbered OBSERVACIONES, looping with `developer` (max 3 cycles). |
+| `reviewer` | Doesn't edit files. Validates against the spec/task and `docs/SETUP.md`, including governance changes in the real diff; returns APROBADO, numbered OBSERVACIONES or BLOQUEADO, looping with `developer` (max 3 cycles). |
 
 Run the full flow with `claude --agent orchestrator` (it must be the main thread: subagents can't spawn subagents). Details in `docs/SETUP.md` §3.
 
-**Human approval is a hard blocker.** No SDD implementation starts until the user writes exactly **"apruebo docs/specs/<slug>.md"** in the chat (bare "apruebo" or "apruebo <slug>" is rejected by the hook); a hook then changes its header from `Estado: borrador` to `Estado: aprobado` (the only two states) and logs who approved in `docs/specs/approvals.jsonl`, HMAC-signed with a per-machine key at `~/.claude/spec-approval.key` (unsigned/forged lines are ignored; approvals don't transfer between machines). After a successful approval the hook tells Claude to continue immediately with implementation following the orchestrator flow (`.claude/agents/orchestrator.md` §3 step 4: developer per task plan, then reviewer) — no second confirmation. Claude may only write specs with `Estado: borrador` (a Write/Edit hook blocks anything else) and never edits the ledger. This applies to every session, with or without the orchestrator: never infer approval, never mark a spec approved without the user's explicit answer, and any edit to an approved spec sends it back to `borrador`. Enforced by hooks in `.claude/settings.json` → `.claude/hooks/spec-approval.mjs` (tests: `npx vitest run .claude/hooks`): launching `developer` is blocked unless every spec its prompt cites has a logged approval and hasn't changed since (ticking plan checkboxes is fine), or the prompt declares `Modo: build`. Don't work around it. The user may edit code directly; these rules bind Claude.
+**Human approval is a hard blocker.** No SDD implementation starts until the user writes exactly **"apruebo docs/specs/<slug>.md"** in the chat and signs the spec's statement with their SSH key in their own terminal; neither step is ever done by Claude. It covers only the spec's current phase and never authorizes governance files (`.claude/` except plans, projects and worktrees, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `.mcp.json`, `docs/SETUP.md`); those also need **"autorizo gobierno docs/specs/<slug>.md"**. Never infer approval, never mark a spec approved, never edit a ledger, and don't work around a block; `Modo: build` doesn't unlock sensitive paths. Claude may only write specs with `Estado: borrador`. The user may edit code directly; these rules bind Claude. Full mechanism, limits and residual risks: `docs/SETUP.md` §3. Enforced by `.claude/hooks/spec-approval.mjs` (tests: `npx vitest run .claude/hooks`).
 
 ## Stack
 

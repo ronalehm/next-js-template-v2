@@ -1,0 +1,277 @@
+diff --git a/.claude/hooks/spec-approval.mjs b/.claude/hooks/spec-approval.mjs
+index 8f7942a..f6d2671 100644
+--- a/.claude/hooks/spec-approval.mjs
++++ b/.claude/hooks/spec-approval.mjs
+@@ -3,6 +3,9 @@
+ //     and appends { spec, hash, phase, approver, date, sig } to docs/specs/approvals.jsonl.
+ //     "autorizo gobierno docs/specs/<slug>.md" is the privileged authorization: it unlocks the paths listed in
+ //     `## Cambios de gobierno` for this session, phase and spec content, and needs a valid functional approval first.
++//     It only records a request: it unlocks nothing until the user signs its own statement (header spec-governance,
++//     root, spec, hash, phase, session, paths, operation, expiry) into <spec>.gov.sig, so running record from a
++//     script, a copy of this hook or another session never yields a usable authorization.
+ //     Signatures use an HMAC with a per-machine key kept outside the repo (~/.claude/spec-approval.key), a separate
+ //     domain per approval type and the repo root, so hand-written lines, replays and copies to other checkouts fail.
+ //     Ceiling: any process running as this OS user can read the key; settings.json denies Claude's file tools on it,
+@@ -135,21 +138,32 @@ const lastApproval = (spec) => {
+ 
+ // What the user signs in their own terminal. The state value and ticks are outside the hash, so it can be signed before or after "apruebo".
+ const statement = (spec, text) => `spec-approval\n${root}\n${spec}\n${hash(text)}\n${phase(text)}\n`;
++// What the user signs to grant one privileged authorization. Its own header keeps a functional signature from matching;
++// labelled lines let the user check session, paths and expiry before signing.
++const govStatement = (e) =>
++  `spec-governance\nraiz: ${root}\nspec: ${e.spec}\nhash: ${e.hash}\nfase: ${e.phase}\nsesion: ${e.session}\n` +
++  `rutas: ${JSON.stringify(e.paths)}\noperacion: ${e.operation}\ncaduca: ${new Date(e.expires).toISOString()}\n`;
++const SESSION_ID = /^[\w-]+$/;
+ // Signs a checked, non-empty statement file, never a pipe: a failing node would otherwise sign empty input.
+-// node.exe skips Git Bash's winpty alias for node. The .sig is replaced only after it verifies.
+-const signCommand = (spec) =>
+-  `s=$(mktemp) && echo {} | node.exe .claude/hooks/spec-approval.mjs statement ${spec} > "$s" && test -s "$s"` +
+-  ` && ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval "$s"` +
+-  ` && ssh-keygen -Y verify -f ~/.claude/spec-allowed-signers -I approver -n spec-approval -s "$s.sig" < "$s"` +
+-  ` && mv "$s.sig" ${spec}.sig && echo "Firma verificada: ${spec}.sig" || echo "ERROR: firma no creada; ${spec}.sig sin cambios" >&2;` +
+-  ` rm -f "$s" "$s.sig"`;
+-
+-function humanSigned(spec, text) {
+-  const sig = resolve(root, `${spec}.sig`);
++// node.exe skips Git Bash's winpty alias for node. It shows what is signed, and replaces the .sig only after it verifies.
++// A governance signature names its session, so a later request from another session cannot take its place.
++const signCommand = (spec, session = null) => {
++  const target = `${spec}${session ? ".gov" : ""}.sig`;
++  return (
++    `s=$(mktemp) && echo {} | node.exe .claude/hooks/spec-approval.mjs statement ${spec}${session ? ` gobierno ${session}` : ""} > "$s" && test -s "$s" && cat "$s"` +
++    ` && ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval "$s"` +
++    ` && ssh-keygen -Y verify -f ~/.claude/spec-allowed-signers -I approver -n spec-approval -s "$s.sig" < "$s"` +
++    ` && mv "$s.sig" ${target} && echo "Firma verificada: ${target}" || echo "ERROR: firma no creada; ${target} sin cambios" >&2;` +
++    ` rm -f "$s" "$s.sig"`
++  );
++};
++
++function sshVerified(sigFile, text) {
++  const sig = resolve(root, sigFile);
+   if (!existsSync(signersPath) || !existsSync(sig)) return false;
+   try {
+     execFileSync("ssh-keygen", ["-Y", "verify", "-f", signersPath, "-I", "approver", "-n", "spec-approval", "-s", sig], {
+-      input: statement(spec, text),
++      input: text,
+       stdio: ["pipe", "ignore", "ignore"],
+     });
+     return true;
+@@ -157,6 +171,7 @@ function humanSigned(spec, text) {
+     return false;
+   }
+ }
++const humanSigned = (spec, text) => sshVerified(`${spec}.sig`, statement(spec, text));
+ 
+ const isValid = (spec, text) => isApproved(text) && lastApproval(spec)?.hash === hash(text) && humanSigned(spec, text);
+ 
+@@ -226,7 +241,7 @@ function authorize(slug) {
+   for (const path of paths) {
+     if (NEVER.test(path) || !GOVERNANCE.test(path)) block(`"${path}" no se puede autorizar: no es un archivo de gobierno editable.`);
+   }
+-  if (!input.session_id) block("la autorización de gobierno requiere una sesión identificada.");
++  if (!SESSION_ID.test(input.session_id ?? "")) block("la autorización de gobierno requiere una sesión identificada.");
+   const entry = {
+     spec,
+     hash: hash(text),
+@@ -242,8 +257,9 @@ function authorize(slug) {
+   mkdirSync(dirname(privilegedPath), { recursive: true });
+   appendFileSync(privilegedPath, `${JSON.stringify(entry)}\n`);
+   console.log(
+-    `Autorización de gobierno de ${entry.approver} para ${spec}, fase "${entry.phase}", operación edit, solo esta sesión, ` +
+-      `válida 2 horas. Rutas: ${paths.join(", ")}. Si cambia la spec, deja de valer.`,
++    `Autorización de gobierno de ${entry.approver} registrada para ${spec}, fase "${entry.phase}", operación edit, solo esta sesión, ` +
++      `válida 2 horas. Rutas: ${paths.join(", ")}. Si cambia la spec, deja de valer. ` +
++      `Falta firma externa: no edites gobierno. El usuario debe ejecutar en Git Bash, no en PowerShell, desde la raíz del repo: ${signCommand(spec, entry.session)}`,
+   );
+ }
+ 
+@@ -332,7 +348,9 @@ function hasPrivilege(rel) {
+       Boolean(input.session_id) &&
+       entry.session === input.session_id &&
+       Date.now() < entry.expires &&
+-      specStillAuthorizes(entry),
++      entry.expires - Date.parse(entry.date) <= PRIVILEGED_TTL_MS &&
++      specStillAuthorizes(entry) &&
++      sshVerified(`${entry.spec}.gov.sig`, govStatement(entry)),
+   );
+ }
+ 
+@@ -462,11 +480,19 @@ function relay() {
+   }
+ }
+ 
+-// Prints what the user signs. Reads nothing secret.
++// Prints what the user signs. With "gobierno <session>", that session's latest privileged request for the spec here.
+ function printStatement() {
+   const spec = slashes(process.argv[3] ?? "");
+   if (!/^docs\/specs\/[\w-]+\.md$/.test(spec) || !existsSync(resolve(root, spec))) block(`la spec ${spec} no existe.`);
+-  process.stdout.write(statement(spec, read(spec)));
++  if (process.argv[4] !== "gobierno") return process.stdout.write(statement(spec, read(spec)));
++  const session = process.argv[5] ?? "";
++  if (!SESSION_ID.test(session)) block(`indica la sesión: statement ${spec} gobierno <session_id>.`);
++  const k = key();
++  const entry = lines(privilegedPath)
++    .filter((e) => e.spec === spec && e.session === session && signed(k, privilegedFields(e), e.sig))
++    .at(-1);
++  if (!entry) block(`no hay autorización de gobierno registrada para ${spec} en la sesión ${session} de este checkout.`);
++  process.stdout.write(govStatement(entry));
+ }
+ 
+ const mode = { record, gate, guard, developer, orchestrator, relay, statement: printStatement }[process.argv[2]];
+diff --git a/.claude/hooks/spec-approval.test.mjs b/.claude/hooks/spec-approval.test.mjs
+index 9f436d0..6843378 100644
+--- a/.claude/hooks/spec-approval.test.mjs
++++ b/.claude/hooks/spec-approval.test.mjs
+@@ -47,9 +47,17 @@ function project() {
+     const text = spawnSync("node", [HOOK, "statement", `docs/specs/${slug}.md`], { input: JSON.stringify({ cwd }), env, encoding: "utf8" });
+     if (text.status === 0) writeFileSync(join(base, `docs/specs/${slug}.md.sig`), sign(KEY, text.stdout));
+   };
++  // Same for "autorizo gobierno": the user signs the request the hook just recorded.
++  const signGovernance = ({ prompt, unsigned, session_id }) => {
++    const slug = (prompt ?? "").trim().match(/^autorizo\s+gobierno\s+docs\/specs\/([\w-]+)\.md$/i)?.[1];
++    if (!slug || unsigned || !session_id) return;
++    const text = spawnSync("node", [HOOK, "statement", `docs/specs/${slug}.md`, "gobierno", session_id], { input: "{}", env, encoding: "utf8" });
++    if (text.status === 0) writeFileSync(join(dir, `docs/specs/${slug}.md.gov.sig`), sign(KEY, text.stdout));
++  };
+   const run = (mode, payload) => {
+     if (mode === "record") signSpec(payload);
+     const r = spawnSync("node", [HOOK, mode], { input: JSON.stringify(payload), env, encoding: "utf8" });
++    if (mode === "record") signGovernance(payload);
+     return { code: r.status, out: r.stdout + r.stderr };
+   };
+   const spec = (name, body = "") =>
+@@ -255,6 +263,70 @@ test("governance: privileged authorization is limited by scope, session and spec
+   assert.equal(write(p, ".claude/settings.json").code, 2, "spec changed after authorization");
+ });
+ 
++test("governance: only the user's signature of this exact request unlocks it", () => {
++  const p = project();
++  governed(p, "g", { governance: ["CLAUDE.md", "docs/SETUP.md"] });
++  approve(p);
++  const govSig = join(p.dir, "docs/specs/g.md.gov.sig");
++  const request = (session = SESSION) =>
++    p.run("record", { prompt: "autorizo gobierno docs/specs/g.md", session_id: session, unsigned: true });
++  const requestText = (session = SESSION) =>
++    spawnSync("node", [HOOK, "statement", "docs/specs/g.md", "gobierno", session], { input: "{}", env: p.env, encoding: "utf8" }).stdout;
++  const claudeMd = (session) => write(p, "CLAUDE.md", session).code;
++
++  const r = request();
++  assert.equal(r.code, 0);
++  assert.match(r.out, /Falta firma externa/);
++  assert.match(r.out, new RegExp(`statement docs/specs/g\\.md gobierno ${SESSION} `), "the printed command names its session");
++  assert.equal(claudeMd(), 2, "record called directly, nobody signed");
++
++  const copy = join(tempDir("spec-copy-"), "h.mjs");
++  copyFileSync(HOOK, copy);
++  const scripted = (session) =>
++    spawnSync("node", [copy, "record"], {
++      input: JSON.stringify({ prompt: "autorizo gobierno docs/specs/g.md", session_id: session }),
++      env: p.env,
++      encoding: "utf8",
++    }).status;
++  assert.equal(scripted(SESSION), 0, "the copy records a request");
++  assert.equal(claudeMd(), 2, "a script running a copy of the hook gets nothing usable");
++
++  const text = requestText();
++  assert.equal(scripted("agent-session"), 0, "a later request from another session");
++  assert.equal(requestText(), text, "the user still signs their own session's request");
++  assert.match(text, /^spec-governance\n/);
++  for (const field of ["spec: docs/specs/g.md", `sesion: ${SESSION}`, 'rutas: ["CLAUDE.md","docs/SETUP.md"]', "operacion: edit", "caduca: 20"]) {
++    assert.ok(text.includes(field), field);
++  }
++  const noSession = spawnSync("node", [HOOK, "statement", "docs/specs/g.md", "gobierno"], { input: "{}", env: p.env, encoding: "utf8" });
++  assert.equal(noSession.status, 2, "statement without a session");
++  writeFileSync(govSig, "");
++  assert.equal(claudeMd(), 2, "empty");
++  writeFileSync(govSig, "not a signature");
++  assert.equal(claudeMd(), 2, "garbage");
++  writeFileSync(govSig, readFileSync(join(p.dir, "docs/specs/g.md.sig")));
++  assert.equal(claudeMd(), 2, "the functional signature");
++  writeFileSync(govSig, sign(KEY, text.replace("spec-governance", "spec-approval")));
++  assert.equal(claudeMd(), 2, "same fields, functional header");
++  writeFileSync(govSig, sign(newKey(), text));
++  assert.equal(claudeMd(), 2, "another key");
++
++  request("other-session");
++  writeFileSync(govSig, sign(KEY, requestText("other-session")));
++  assert.equal(claudeMd(), 2, "signed for another session");
++
++  writeFileSync(govSig, sign(KEY, requestText()));
++  assert.equal(claudeMd(), 0, "valid signature");
++  assert.equal(write(p, "docs/SETUP.md").code, 0, "signed scope");
++  assert.equal(write(p, ".claude/settings.json").code, 2, "outside the signed scope");
++  assert.equal(claudeMd("other-session"), 2, "the other session's request stays unsigned");
++
++  assert.equal(launch(p, "developer", "docs/specs/g.md Fase: B").code, 0, "gate phase B unchanged");
++  assert.equal(launch(p, "developer", "docs/specs/g.md Fase: C").code, 2, "gate phase C unchanged");
++  p.write("g", p.file("g") + "- cambio\n");
++  assert.equal(claudeMd(), 2, "spec changed after signing");
++});
++
+ test("governance: privileged authorization rejects empty, foreign and ledger scopes", () => {
+   const p = project();
+   governed(p, "empty");
+@@ -306,14 +378,20 @@ test("governance: an expired authorization stops working, even with a valid sign
+   authorize(p);
+   const file = join(p.dir, "privileged.jsonl");
+   const entry = JSON.parse(readFileSync(file, "utf8"));
+-  const expires = Date.now() - 1000;
+-  const sig = createHmac("sha256", readFileSync(join(p.dir, "key"), "utf8").trim())
+-    .update(
+-      ["privileged", resolve(p.dir), entry.spec, entry.hash, entry.phase, entry.paths.join(","), entry.operation, entry.session, expires, entry.approver, entry.date].join("\n"),
+-    )
+-    .digest("hex");
+-  writeFileSync(file, `${JSON.stringify({ ...entry, expires, sig })}\n`);
++  const forge = (expires) => {
++    const sig = createHmac("sha256", readFileSync(join(p.dir, "key"), "utf8").trim())
++      .update(
++        ["privileged", resolve(p.dir), entry.spec, entry.hash, entry.phase, entry.paths.join(","), entry.operation, entry.session, expires, entry.approver, entry.date].join("\n"),
++      )
++      .digest("hex");
++    writeFileSync(file, `${JSON.stringify({ ...entry, expires, sig })}\n`);
++    const text = spawnSync("node", [HOOK, "statement", "docs/specs/g.md", "gobierno", SESSION], { input: "{}", env: p.env, encoding: "utf8" }).stdout;
++    writeFileSync(join(p.dir, "docs/specs/g.md.gov.sig"), sign(KEY, text));
++  };
++  forge(Date.now() - 1000);
+   assert.equal(write(p, "CLAUDE.md").code, 2);
++  forge(Date.parse(entry.date) + 365 * 24 * 60 * 60 * 1000);
++  assert.equal(write(p, "CLAUDE.md").code, 2, "a request longer than 2 hours, even signed");
+ });
+ 
+ test("governance: aliases of protected paths are still protected", () => {
+diff --git a/docs/SETUP.md b/docs/SETUP.md
+index 6c06451..a2ce452 100644
+--- a/docs/SETUP.md
++++ b/docs/SETUP.md
+@@ -240,7 +240,8 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
+ | Comando en el chat | `apruebo docs/specs/<slug>.md` | `autorizo gobierno docs/specs/<slug>.md` |
+ | Autoriza | La `Fase actual` de la spec y las rutas de `## Archivos sensibles` | Editar las rutas de `## Cambios de gobierno`, solo en esa sesión, durante 2 horas |
+ | Nunca autoriza | Archivos de gobierno, aunque la spec los cite | Registros de aprobación ni rutas no listadas |
+-| Se invalida si | Cambia la spec, incluida `Fase actual`, se usa en otro checkout o termina el plan | Lo anterior, otra sesión, caducidad o una aprobación posterior |
++| Firma SSH del usuario | `docs/specs/<slug>.md.sig` sobre raíz, spec, hash y fase | `docs/specs/<slug>.md.gov.sig` sobre raíz, spec, hash, fase, sesión, rutas, operación y caducidad, con cabecera propia |
++| Se invalida si | Cambia la spec, incluida `Fase actual`, se usa en otro checkout o termina el plan | Lo anterior, otra sesión, caducidad, una aprobación posterior o falta su firma |
+ 
+ - **Gobierno:** `.claude/` salvo `plans/`, `projects/` y `worktrees/`; `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `.mcp.json`, `docs/SETUP.md`.
+ - **Nunca editables por un agente:** `docs/specs/approvals.jsonl`, `~/.claude/spec-privileged.jsonl`, `~/.claude/spec-approval.key`, `.git/`.
+@@ -251,8 +252,9 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
+   2. Cada aprobación, tras `apruebo`, en Git Bash desde la raíz del repo, no en PowerShell: el comando exacto que imprime el hook. Usa `node.exe` (el alias `node` de Git Bash pasa por `winpty` y rompe la tubería), escribe la declaración en un archivo temporal, aborta si `node.exe` falla o la declaración sale vacía, firma solo ese archivo y reemplaza `docs/specs/<slug>.md.sig` solo si la firma verifica contra `~/.claude/spec-allowed-signers`. Si algo falla imprime `ERROR: firma no creada` y la `.sig` anterior queda intacta:
+ 
+      ```bash
+-     s=$(mktemp) && echo {} | node.exe .claude/hooks/spec-approval.mjs statement docs/specs/<slug>.md > "$s" && test -s "$s" && ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval "$s" && ssh-keygen -Y verify -f ~/.claude/spec-allowed-signers -I approver -n spec-approval -s "$s.sig" < "$s" && mv "$s.sig" docs/specs/<slug>.md.sig && echo "Firma verificada: docs/specs/<slug>.md.sig" || echo "ERROR: firma no creada; docs/specs/<slug>.md.sig sin cambios" >&2; rm -f "$s" "$s.sig"
++     s=$(mktemp) && echo {} | node.exe .claude/hooks/spec-approval.mjs statement docs/specs/<slug>.md > "$s" && test -s "$s" && cat "$s" && ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval "$s" && ssh-keygen -Y verify -f ~/.claude/spec-allowed-signers -I approver -n spec-approval -s "$s.sig" < "$s" && mv "$s.sig" docs/specs/<slug>.md.sig && echo "Firma verificada: docs/specs/<slug>.md.sig" || echo "ERROR: firma no creada; docs/specs/<slug>.md.sig sin cambios" >&2; rm -f "$s" "$s.sig"
+      ```
++  3. Cada autorización de gobierno, tras `autorizo gobierno`, igual: el hook imprime el comando, que añade `gobierno <session_id>` a `statement` y escribe `docs/specs/<slug>.md.gov.sig`. Solo firma la solicitud de esa sesión. Muestra la declaración antes de firmar: comprueba que `sesion:` coincide con la de `/status` y revisa `rutas:` y `caduca:`. Hasta esa firma, `autorizo gobierno` solo registra una solicitud y no desbloquea nada; ejecutar `record` desde un script o una copia del hook tampoco.
+ - Ninguna aprobación de spec autoriza desplegar, borrar datos ni migrar producción: eso requiere una orden expresa.
+ 
+ **Riesgos residuales:** estos controles evitan desvíos de un agente; no aíslan frente a un proceso local con los mismos permisos.
+@@ -263,7 +265,9 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
+ - Un proceso del mismo usuario puede reemplazar `~/.claude/spec-allowed-signers` o el hook por shell. La firma impide falsificar consentimiento mientras esos archivos sigan íntegros; solo un archivo de administrador o una verificación en servidor lo garantizan.
+ - Los hooks de frontmatter no corren en una carpeta sin confianza aceptada, y `claude -p` no la pide. Los controles de gobierno viven en `.claude/settings.json`.
+ - Sin firma, una aprobación no desbloquea nada. `relay` y el `deny` sobre `claude` bloquean el comando literal, no un texto codificado ni un script que lance otra sesión.
+-- `autorizo gobierno` no tiene firma propia: se apoya en la firma de la aprobación funcional. `relay` y el `deny` bloquean ejecutar el modo `record` del hook desde la terminal, pero no una copia del hook con otro nombre ni un comando codificado o dividido en varios pasos.
++- `relay` y el `deny` también bloquean ejecutar el modo `record` del hook desde la terminal. Es una defensa adicional, no el control: una copia con otro nombre o un comando codificado los evita, pero sin la firma del usuario la solicitud no desbloquea nada.
++  Bloquea también comandos legítimos que mencionen ambos, como `grep record` sobre el hook: usar Grep o Read.
++- La declaración de gobierno se firma tal como la imprime el hook. Si el agente cambiara el comando al transmitirlo, o un proceso con la clave HMAC añadiera una solicitud con otras rutas, el usuario lo vería al firmar: comparar `sesion:` con `/status` y revisar `rutas:` es su control.
+ - En una sesión de escritorio con worktree corre la copia del hook del checkout principal. Si esa copia ya incluye la comprobación de integridad y difiere de la del worktree, bloquea; una copia anterior no lo detecta.
+ - Mientras una spec con su plan abierto liste una ruta sensible, `Modo: build` puede editarla: el hook no conoce la tarea. `reviewer` lo revisa en el diff.
+ - Las únicas capas fuera del alcance del usuario local son `managed-settings.json`, protegido por administrador, y reglas del servidor Git.

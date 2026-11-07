@@ -1,0 +1,156 @@
+diff --git a/.claude/hooks/spec-approval.mjs b/.claude/hooks/spec-approval.mjs
+index fc6e393..8f7942a 100644
+--- a/.claude/hooks/spec-approval.mjs
++++ b/.claude/hooks/spec-approval.mjs
+@@ -135,8 +135,14 @@ const lastApproval = (spec) => {
+ 
+ // What the user signs in their own terminal. The state value and ticks are outside the hash, so it can be signed before or after "apruebo".
+ const statement = (spec, text) => `spec-approval\n${root}\n${spec}\n${hash(text)}\n${phase(text)}\n`;
++// Signs a checked, non-empty statement file, never a pipe: a failing node would otherwise sign empty input.
++// node.exe skips Git Bash's winpty alias for node. The .sig is replaced only after it verifies.
+ const signCommand = (spec) =>
+-  `echo {} | node .claude/hooks/spec-approval.mjs statement ${spec} | ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval > ${spec}.sig`;
++  `s=$(mktemp) && echo {} | node.exe .claude/hooks/spec-approval.mjs statement ${spec} > "$s" && test -s "$s"` +
++  ` && ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval "$s"` +
++  ` && ssh-keygen -Y verify -f ~/.claude/spec-allowed-signers -I approver -n spec-approval -s "$s.sig" < "$s"` +
++  ` && mv "$s.sig" ${spec}.sig && echo "Firma verificada: ${spec}.sig" || echo "ERROR: firma no creada; ${spec}.sig sin cambios" >&2;` +
++  ` rm -f "$s" "$s.sig"`;
+ 
+ function humanSigned(spec, text) {
+   const sig = resolve(root, `${spec}.sig`);
+@@ -448,8 +454,10 @@ function relay() {
+   const command = (text) => APPROVE.test(text.trim()) || AUTHORIZE.test(text.trim());
+   const launchesClaude = (text) =>
+     /(?<!\.)claude(?!(\.local)?\.md)/i.test(text) && /(apruebo|autorizo\s+gobierno)\s+\S*docs[\\/]specs/i.test(text);
++  // Running the hook's record mode from a shell would write a ledger entry nobody typed, including "autorizo gobierno".
++  const recordsByHand = (text) => /spec-approval/i.test(text) && /\brecord\b/i.test(text);
+   const shell = /^(Bash|PowerShell|mcp__terminal__)/.test(input.tool_name ?? "");
+-  if (values.some(command) || (shell && values.some(launchesClaude))) {
++  if (values.some(command) || (shell && values.some((text) => launchesClaude(text) || recordsByHand(text)))) {
+     block(`${input.tool_name} no puede enviar una aprobación: solo el usuario la escribe en el chat.`);
+   }
+ }
+diff --git a/.claude/hooks/spec-approval.test.mjs b/.claude/hooks/spec-approval.test.mjs
+index 7352ecf..9f436d0 100644
+--- a/.claude/hooks/spec-approval.test.mjs
++++ b/.claude/hooks/spec-approval.test.mjs
+@@ -4,9 +4,9 @@ import { afterAll, test, vi } from "vitest";
+ import assert from "node:assert/strict";
+ import { createHmac } from "node:crypto";
+ import { spawnSync, execSync } from "node:child_process";
+-import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
++import { appendFileSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+ import { homedir, tmpdir } from "node:os";
+-import { join, resolve } from "node:path";
++import { delimiter, join, resolve } from "node:path";
+ 
+ const HOOK = join(import.meta.dirname, "spec-approval.mjs");
+ 
+@@ -560,6 +560,13 @@ test("relay: launching Claude by another route, or from PowerShell, is also stop
+   assert.equal(relay("PowerShell", 'claude -p "autorizo gobierno docs/specs/g.md"'), 2);
+   assert.equal(relay("Bash", 'grep "apruebo docs/specs" .claude/agents/spec.md'), 0, ".claude is only a path");
+ 
++  // An agent feeding the hook's record mode itself would mint "autorizo gobierno" without the user.
++  const selfRecord = `echo '{"prompt":"autorizo gobierno docs/specs/g.md","session_id":"S"}' | node .claude/hooks/spec-approval.mjs record`;
++  assert.equal(relay("Bash", selfRecord), 2, "record mode from Bash");
++  assert.equal(relay("PowerShell", `'{}' | node "$PWD\\.claude\\hooks\\spec-approval.mjs" "record"`), 2, "record mode from PowerShell");
++  assert.equal(relay("Bash", "cp .claude/hooks/spec-approval.mjs /tmp/h.mjs && node /tmp/h.mjs record"), 2, "copied in the same command");
++  assert.equal(relay("Bash", "npx vitest run .claude/hooks/spec-approval.test.mjs"), 0, "tests still run");
++
+   const developer = (tool_name, command) => p.run("developer", { tool_name, tool_input: { command } }).code;
+   assert.equal(developer("PowerShell", "Set-Content docs/specs/a.md x"), 2, "developer in PowerShell");
+ });
+@@ -767,6 +774,51 @@ test("external confirmation: only a valid signature of this content counts", ()
+   assert.equal(gate(), 2, "content changed");
+ });
+ 
++// Git Bash's own tools, so the printed command runs as the user runs it (and not under WSL's bash).
++const BIN = process.platform === "win32" ? resolve(execSync("git --exec-path", { encoding: "utf8" }).trim(), "../../../usr/bin") : "/usr/bin";
++const tool = (name) => join(BIN, process.platform === "win32" ? `${name}.exe` : name);
++
++test("external confirmation: the printed sign command signs only a checked statement", () => {
++  const p = project();
++  governed(p, "g", { sensitive: ["proxy.ts"] });
++  const command = p.run("record", { prompt: "apruebo docs/specs/g.md", unsigned: true }).out.match(/raíz del repo: (.+)$/m)[1];
++  const home = tempDir("spec-home-");
++  mkdirSync(join(home, ".ssh"));
++  mkdirSync(join(home, ".claude"));
++  const key = join(home, ".ssh/spec_approval");
++  execSync(`ssh-keygen -t ed25519 -N "" -q -f "${key}"`);
++  const signers = join(home, ".claude/spec-allowed-signers");
++  signersFor(key, signers);
++  signersFor(key, p.env.SPEC_ALLOWED_SIGNERS);
++  mkdirSync(join(p.dir, ".claude/hooks"), { recursive: true });
++  copyFileSync(HOOK, join(p.dir, ".claude/hooks/spec-approval.mjs"));
++  const sig = join(p.dir, "docs/specs/g.md.sig");
++  writeFileSync(sig, "previous");
++  const pathKey = Object.keys(p.env).find((k) => k.toUpperCase() === "PATH");
++  const sh = (fakeNode) => {
++    const bin = tempDir("spec-bin-");
++    if (fakeNode) copyFileSync(tool(fakeNode), join(bin, "node.exe"));
++    const env = { ...p.env, HOME: home, [pathKey]: [bin, BIN, p.env[pathKey]].join(delimiter) };
++    const r = spawnSync(tool("bash"), ["-c", command], { cwd: p.dir, env, encoding: "utf8" });
++    return r.stdout + r.stderr;
++  };
++  const gate = () => launch(p, "developer", "docs/specs/g.md Fase: B").code;
++
++  assert.match(sh("false"), /ERROR: firma no creada/, "node.exe fails");
++  assert.equal(readFileSync(sig, "utf8"), "previous");
++  assert.match(sh("true"), /ERROR: firma no creada/, "empty statement");
++  assert.equal(readFileSync(sig, "utf8"), "previous");
++  assert.equal(gate(), 2);
++  if (process.platform !== "win32") return; // node.exe exists only on Windows.
++
++  signersFor(newKey(), signers);
++  assert.match(sh(), /ERROR: firma no creada/, "signature that does not verify");
++  assert.equal(readFileSync(sig, "utf8"), "previous");
++  signersFor(key, signers);
++  assert.match(sh(), /Firma verificada/);
++  assert.equal(gate(), 0);
++});
++
+ test("external confirmation: key material and signers are out of reach of Write and Edit", () => {
+   const p = project();
+   governed(p, "g", { sensitive: ["spec-allowed-signers"], governance: ["spec-allowed-signers"] });
+diff --git a/.claude/settings.json b/.claude/settings.json
+index 57aaf72..1e9919b 100644
+--- a/.claude/settings.json
++++ b/.claude/settings.json
+@@ -8,9 +8,11 @@
+       "Bash(*spec-approval.key*)",
+       "Bash(*spec-privileged*)",
+       "Bash(claude *)",
++      "Bash(*spec-approval*record*)",
+       "PowerShell(*spec-approval.key*)",
+       "PowerShell(*spec-privileged*)",
+-      "PowerShell(claude *)"
++      "PowerShell(claude *)",
++      "PowerShell(*spec-approval*record*)"
+     ],
+     "ask": [
+       "Edit(/.claude/hooks/**)",
+diff --git a/docs/SETUP.md b/docs/SETUP.md
+index 5466532..6c06451 100644
+--- a/docs/SETUP.md
++++ b/docs/SETUP.md
+@@ -248,7 +248,11 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
+ - Una spec con todas las tareas de `## Plan` marcadas deja de autorizar rutas protegidas. Desmarcar casillas de una spec aprobada se bloquea.
+ - **Confirmación externa:** el comando en el chat y su HMAC no prueban consentimiento humano: `claude -p` también los produce. Una aprobación solo vale con una firma SSH de la declaración de la spec, hecha por el usuario en su terminal con una clave protegida por frase o por llave de hardware, sin cargarla en `ssh-agent`:
+   1. Una vez: `ssh-keygen -t ed25519 -f ~/.ssh/spec_approval`, y en `~/.claude/spec-allowed-signers` la línea `approver namespaces="spec-approval" <contenido de spec_approval.pub>`.
+-  2. Cada aprobación, tras `apruebo`, en Git Bash desde la raíz del repo (en PowerShell 5.1 la tubería falla): `echo {} | node .claude/hooks/spec-approval.mjs statement docs/specs/<slug>.md | ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval > docs/specs/<slug>.md.sig`.
++  2. Cada aprobación, tras `apruebo`, en Git Bash desde la raíz del repo, no en PowerShell: el comando exacto que imprime el hook. Usa `node.exe` (el alias `node` de Git Bash pasa por `winpty` y rompe la tubería), escribe la declaración en un archivo temporal, aborta si `node.exe` falla o la declaración sale vacía, firma solo ese archivo y reemplaza `docs/specs/<slug>.md.sig` solo si la firma verifica contra `~/.claude/spec-allowed-signers`. Si algo falla imprime `ERROR: firma no creada` y la `.sig` anterior queda intacta:
++
++     ```bash
++     s=$(mktemp) && echo {} | node.exe .claude/hooks/spec-approval.mjs statement docs/specs/<slug>.md > "$s" && test -s "$s" && ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval "$s" && ssh-keygen -Y verify -f ~/.claude/spec-allowed-signers -I approver -n spec-approval -s "$s.sig" < "$s" && mv "$s.sig" docs/specs/<slug>.md.sig && echo "Firma verificada: docs/specs/<slug>.md.sig" || echo "ERROR: firma no creada; docs/specs/<slug>.md.sig sin cambios" >&2; rm -f "$s" "$s.sig"
++     ```
+ - Ninguna aprobación de spec autoriza desplegar, borrar datos ni migrar producción: eso requiere una orden expresa.
+ 
+ **Riesgos residuales:** estos controles evitan desvíos de un agente; no aíslan frente a un proceso local con los mismos permisos.
+@@ -259,6 +263,7 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
+ - Un proceso del mismo usuario puede reemplazar `~/.claude/spec-allowed-signers` o el hook por shell. La firma impide falsificar consentimiento mientras esos archivos sigan íntegros; solo un archivo de administrador o una verificación en servidor lo garantizan.
+ - Los hooks de frontmatter no corren en una carpeta sin confianza aceptada, y `claude -p` no la pide. Los controles de gobierno viven en `.claude/settings.json`.
+ - Sin firma, una aprobación no desbloquea nada. `relay` y el `deny` sobre `claude` bloquean el comando literal, no un texto codificado ni un script que lance otra sesión.
++- `autorizo gobierno` no tiene firma propia: se apoya en la firma de la aprobación funcional. `relay` y el `deny` bloquean ejecutar el modo `record` del hook desde la terminal, pero no una copia del hook con otro nombre ni un comando codificado o dividido en varios pasos.
+ - En una sesión de escritorio con worktree corre la copia del hook del checkout principal. Si esa copia ya incluye la comprobación de integridad y difiere de la del worktree, bloquea; una copia anterior no lo detecta.
+ - Mientras una spec con su plan abierto liste una ruta sensible, `Modo: build` puede editarla: el hook no conoce la tarea. `reviewer` lo revisa en el diff.
+ - Las únicas capas fuera del alcance del usuario local son `managed-settings.json`, protegido por administrador, y reglas del servidor Git.

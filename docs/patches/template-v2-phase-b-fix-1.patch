@@ -1,0 +1,349 @@
+diff --git a/.claude/agents/developer.md b/.claude/agents/developer.md
+index b638e40..e37a567 100644
+--- a/.claude/agents/developer.md
++++ b/.claude/agents/developer.md
+@@ -1,12 +1,6 @@
+ ---
+ name: developer
+ description: Agente Developer. Implementa una tarea de una spec aprobada (modo SDD) o un cambio directo (modo build) siguiendo docs/SETUP.md, con sus unit tests. Puede ejecutarse en paralelo con otros developers sobre archivos disjuntos. También corrige las observaciones del reviewer.
+-hooks:
+-  PreToolUse:
+-    - matcher: "Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell"
+-      hooks:
+-        - type: command
+-          command: node "$CLAUDE_PROJECT_DIR/.claude/hooks/spec-approval.mjs" developer
+ ---
+ 
+ Eres el agente Developer de este proyecto, una plantilla Next.js genérica (no ligada a ningún sector). Lee `docs/SETUP.md` completo antes de escribir código.
+@@ -28,7 +22,7 @@ El orquestador te indica el modo:
+ - Respeta estructura modular, convenciones de nombres, capas, SOLID/DRY/KISS/YAGNI y `"use client"` solo donde haga falta.
+ - Escribe los unit tests que pide la spec (o que exige `docs/SETUP.md` en modo build), junto al archivo que prueban.
+ - No hagas commits.
+-- **Nunca modifiques nada en `docs/specs/`** (specs ni `approvals.jsonl`): solo las lees. Si la spec necesita cambios, detente y repórtalo; los hace el agente `spec`. Un hook de este agente bloquea cualquier escritura ahí y cualquier comando de terminal que mencione `docs/specs`.
++- **Nunca modifiques nada en `docs/specs/`** (specs ni `approvals.jsonl`): solo las lees. Si la spec necesita cambios, detente y repórtalo; los hace el agente `spec`. Un hook por `agent_type` bloquea cualquier escritura ahí y cualquier comando de terminal que mencione `docs/specs`.
+ 
+ ### En modo paralelo además
+ 
+diff --git a/.claude/agents/orchestrator.md b/.claude/agents/orchestrator.md
+index 89c3882..dd3f4df 100644
+--- a/.claude/agents/orchestrator.md
++++ b/.claude/agents/orchestrator.md
+@@ -2,12 +2,6 @@
+ name: orchestrator
+ description: Orquestador del flujo de desarrollo. Clasifica cada pedido en READ-ONLY, BUILD, SDD-LITE o SDD-ADVANCED, planifica trabajo alcanzable en una sesión y coordina a los agentes spec, developer y reviewer, en paralelo cuando las tareas no se pisan. Se ejecuta como hilo principal (`claude --agent orchestrator`).
+ tools: Agent(spec, developer, reviewer), Read, Glob, Grep, Edit
+-hooks:
+-  PreToolUse:
+-    - matcher: "Edit"
+-      hooks:
+-        - type: command
+-          command: node "$CLAUDE_PROJECT_DIR/.claude/hooks/spec-approval.mjs" orchestrator
+ ---
+ 
+ Eres el orquestador de desarrollo de este proyecto: una plantilla Next.js genérica, no ligada a ningún sector de negocio. Las reglas están en `docs/SETUP.md`; léelo antes de empezar (la sección 3 describe este flujo).
+diff --git a/.claude/hooks/spec-approval.mjs b/.claude/hooks/spec-approval.mjs
+index bef69e6..fc6e393 100644
+--- a/.claude/hooks/spec-approval.mjs
++++ b/.claude/hooks/spec-approval.mjs
+@@ -7,8 +7,10 @@
+ //     domain per approval type and the repo root, so hand-written lines, replays and copies to other checkouts fail.
+ //     Ceiling: any process running as this OS user can read the key; settings.json denies Claude's file tools on it,
+ //     but a deliberate Bash command still could.
+-//     Ceiling: UserPromptSubmit also fires for cross-session and scheduled prompts and nothing identifies the source;
+-//     relay only stops tools from delivering the literal command.
++//     Ceiling: UserPromptSubmit also fires for headless, cross-session and scheduled prompts and nothing identifies the
++//     source, so the HMAC does not prove human consent. isValid also requires an SSH signature only the key holder can make.
++//     Ceiling: a same-user process can still replace the signers file or this hook; only admin-owned or server-side
++//     verification closes that.
+ //   gate (PreToolUse Agent): launching an implementing agent requires every cited spec to be approved, unchanged
+ //     since its last approval and the prompt to declare its current phase. `developer` must cite a spec or declare
+ //     `Modo: build`.
+@@ -19,7 +21,7 @@
+ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+-import { execSync } from "node:child_process";
++import { execFileSync, execSync } from "node:child_process";
+ import { homedir, userInfo } from "node:os";
+ import { fileURLToPath } from "node:url";
+ 
+@@ -46,11 +48,13 @@ const root = resolve((input.cwd && gitRoot(input.cwd)) || process.env.CLAUDE_PRO
+ const ledgerPath = resolve(root, SPECS, "approvals.jsonl");
+ const privilegedPath = process.env.SPEC_PRIVILEGED_FILE || join(homedir(), ".claude", "spec-privileged.jsonl");
+ 
++const signersPath = process.env.SPEC_ALLOWED_SIGNERS || join(homedir(), ".claude", "spec-allowed-signers");
++
+ const PRIVILEGED_TTL_MS = 2 * 60 * 60 * 1000;
+ const IMPLEMENTS_NOTHING = new Set(["spec", "reviewer", "Explore", "Plan"]);
+ 
+ // No agent edits these, not even with a privileged authorization.
+-const NEVER = /(^|\/)(docs\/specs\/approvals\.jsonl|spec-approval\.key|spec-privileged\.jsonl|\.git(\/.*)?)$/i;
++const NEVER = /(^|\/)(docs\/specs\/approvals\.jsonl|spec-approval\.key|spec-privileged\.jsonl|spec-allowed-signers|\.ssh\/.*|\.git(\/.*)?)$/i;
+ const GOVERNANCE =
+   /(^|\/)(\.claude\/(?!plans\/|projects\/|worktrees\/)|CLAUDE(\.local)?\.md$|AGENTS\.md$|\.mcp\.json$|docs\/SETUP\.md$)/i;
+ const SENSITIVE =
+@@ -129,7 +133,26 @@ const lastApproval = (spec) => {
+   return entries(spec).filter((entry) => signed(k, functionalFields(entry), entry.sig)).at(-1);
+ };
+ 
+-const isValid = (spec, text) => isApproved(text) && lastApproval(spec)?.hash === hash(text);
++// What the user signs in their own terminal. The state value and ticks are outside the hash, so it can be signed before or after "apruebo".
++const statement = (spec, text) => `spec-approval\n${root}\n${spec}\n${hash(text)}\n${phase(text)}\n`;
++const signCommand = (spec) =>
++  `echo {} | node .claude/hooks/spec-approval.mjs statement ${spec} | ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval > ${spec}.sig`;
++
++function humanSigned(spec, text) {
++  const sig = resolve(root, `${spec}.sig`);
++  if (!existsSync(signersPath) || !existsSync(sig)) return false;
++  try {
++    execFileSync("ssh-keygen", ["-Y", "verify", "-f", signersPath, "-I", "approver", "-n", "spec-approval", "-s", sig], {
++      input: statement(spec, text),
++      stdio: ["pipe", "ignore", "ignore"],
++    });
++    return true;
++  } catch {
++    return false;
++  }
++}
++
++const isValid = (spec, text) => isApproved(text) && lastApproval(spec)?.hash === hash(text) && humanSigned(spec, text);
+ 
+ // A spec with every task of its plan ticked stops unlocking protected files.
+ const planOpen = (text) => sectionLines(text, (line) => line.startsWith("## Plan")).some((line) => /- \[ \]/.test(line));
+@@ -170,6 +193,10 @@ function approve(slug) {
+   entry.sig = sign(key({ create: true }), functionalFields(entry));
+   writeFileSync(resolve(root, spec), approved);
+   appendFileSync(ledgerPath, `${JSON.stringify(entry)}\n`);
++  if (!humanSigned(spec, approved)) {
++    console.log(`Spec ${spec} registrada, pero falta firma externa: no implementes ni lances agentes. El usuario debe ejecutar en Git Bash, no en PowerShell, desde la raíz del repo: ${signCommand(spec)}`);
++    return;
++  }
+   // UserPromptSubmit stdout is added to Claude's context: it confirms the approval and starts implementation.
+   console.log(
+     `Spec ${spec} aprobada por ${entry.approver} (${entry.date}); el hook cambió su cabecera a "Estado: aprobado". ` +
+@@ -260,6 +287,9 @@ function gate() {
+       continue;
+     }
+     const last = lastApproval(spec);
++    if (last?.hash === hash(text) && isApproved(text)) {
++      block(`la spec ${spec} no tiene firma externa válida. El usuario debe ejecutar en Git Bash, no en PowerShell, desde la raíz del repo: ${signCommand(spec)}`);
++    }
+     if (last && isApproved(text)) {
+       block(`la spec ${spec} cambió después de su aprobación (${last.approver}, ${last.date}). El usuario debe volver a escribir "apruebo ${spec}".`);
+     }
+@@ -351,6 +381,9 @@ function protect(abs) {
+ // ponytail: Bash redirects (echo > spec.md) bypass this; the gate still rejects unsigned approvals.
+ function guard() {
+   const { file_path = "", notebook_path = "", content, new_string, old_string = "", replace_all, edits } = input.tool_input ?? {};
++  // Settings hooks run without workspace trust; agent frontmatter hooks do not.
++  if (input.agent_type === "orchestrator") orchestrator();
++  if (input.agent_type === "developer") developer();
+   const target = file_path || notebook_path;
+   if (!target) return;
+   const abs = canonical(target);
+@@ -410,6 +443,7 @@ const strings = (value) =>
+ 
+ // ponytail: stops the literal command only; encoded or concatenated text passes. Declared as residual risk.
+ function relay() {
++  if (input.agent_type === "developer") developer();
+   const values = strings(input.tool_input);
+   const command = (text) => APPROVE.test(text.trim()) || AUTHORIZE.test(text.trim());
+   const launchesClaude = (text) =>
+@@ -420,6 +454,13 @@ function relay() {
+   }
+ }
+ 
+-const mode = { record, gate, guard, developer, orchestrator, relay }[process.argv[2]];
++// Prints what the user signs. Reads nothing secret.
++function printStatement() {
++  const spec = slashes(process.argv[3] ?? "");
++  if (!/^docs\/specs\/[\w-]+\.md$/.test(spec) || !existsSync(resolve(root, spec))) block(`la spec ${spec} no existe.`);
++  process.stdout.write(statement(spec, read(spec)));
++}
++
++const mode = { record, gate, guard, developer, orchestrator, relay, statement: printStatement }[process.argv[2]];
+ if (!mode) block(`modo desconocido "${process.argv[2]}".`);
+ mode();
+diff --git a/.claude/hooks/spec-approval.test.mjs b/.claude/hooks/spec-approval.test.mjs
+index 608bd47..7352ecf 100644
+--- a/.claude/hooks/spec-approval.test.mjs
++++ b/.claude/hooks/spec-approval.test.mjs
+@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
+ import { createHmac } from "node:crypto";
+ import { spawnSync, execSync } from "node:child_process";
+ import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+-import { tmpdir } from "node:os";
++import { homedir, tmpdir } from "node:os";
+ import { join, resolve } from "node:path";
+ 
+ const HOOK = join(import.meta.dirname, "spec-approval.mjs");
+@@ -14,6 +14,7 @@ const HOOK = join(import.meta.dirname, "spec-approval.mjs");
+ vi.setConfig({ testTimeout: 120_000 });
+ 
+ const tempDirs = [];
++const COMMAND = /^apruebo\s+(?:\.[\\/])?docs[\\/]specs[\\/]([\w-]+)\.md$/i;
+ const tempDir = (prefix) => {
+   const dir = mkdtempSync(join(tmpdir(), prefix));
+   tempDirs.push(dir);
+@@ -21,12 +22,33 @@ const tempDir = (prefix) => {
+ };
+ afterAll(() => tempDirs.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+ 
++function newKey() {
++  const key = join(tempDir("spec-key-"), "id");
++  execSync(`ssh-keygen -t ed25519 -N "" -q -f "${key}"`);
++  return key;
++}
++const KEY = newKey();
++const signersFor = (key, path) =>
++  writeFileSync(path, `approver namespaces="spec-approval" ${readFileSync(`${key}.pub`, "utf8")}`);
++const sign = (key, text, namespace = "spec-approval") =>
++  spawnSync("ssh-keygen", ["-Y", "sign", "-f", key, "-n", namespace], { input: text, encoding: "utf8" }).stdout;
++
+ function project() {
+   const dir = tempDir("spec-approval-");
+   mkdirSync(join(dir, "docs/specs"), { recursive: true });
+   execSync("git init -q && git config user.name Tester && git config user.email t@x.io", { cwd: dir });
+-  const env = { ...process.env, CLAUDE_PROJECT_DIR: dir, SPEC_APPROVAL_KEY_FILE: join(dir, "key"), SPEC_PRIVILEGED_FILE: join(dir, "privileged.jsonl") };
++  const env = { ...process.env, CLAUDE_PROJECT_DIR: dir, SPEC_APPROVAL_KEY_FILE: join(dir, "key"), SPEC_PRIVILEGED_FILE: join(dir, "privileged.jsonl"), SPEC_ALLOWED_SIGNERS: join(dir, "signers") };
++  signersFor(KEY, env.SPEC_ALLOWED_SIGNERS);
++  // The user's external signature, for every test that approves. "unsigned" models a prompt nobody confirmed.
++  const signSpec = ({ prompt, cwd, unsigned }) => {
++    const slug = (prompt ?? "").trim().match(COMMAND)?.[1];
++    if (!slug || unsigned) return;
++    const base = cwd ? execSync("git rev-parse --show-toplevel", { cwd, encoding: "utf8" }).trim() : dir;
++    const text = spawnSync("node", [HOOK, "statement", `docs/specs/${slug}.md`], { input: JSON.stringify({ cwd }), env, encoding: "utf8" });
++    if (text.status === 0) writeFileSync(join(base, `docs/specs/${slug}.md.sig`), sign(KEY, text.stdout));
++  };
+   const run = (mode, payload) => {
++    if (mode === "record") signSpec(payload);
+     const r = spawnSync("node", [HOOK, mode], { input: JSON.stringify(payload), env, encoding: "utf8" });
+     return { code: r.status, out: r.stdout + r.stderr };
+   };
+@@ -697,3 +719,79 @@ test("usability: phase markup and reading CLAUDE.md are not blocked", () => {
+   assert.equal(relay('grep -n "apruebo docs/specs" CLAUDE.local.md'), 0);
+   assert.equal(relay('claude -p "apruebo docs/specs/g.md"'), 2);
+ });
++
++// R7: el comando en el chat y su HMAC no prueban consentimiento humano.
++
++test("external confirmation: an approval nobody signed unlocks nothing", () => {
++  const p = project();
++  governed(p, "g", { sensitive: ["proxy.ts"], governance: ["CLAUDE.md"] });
++  const r = p.run("record", { prompt: "apruebo docs/specs/g.md", unsigned: true, session_id: SESSION });
++  assert.equal(r.code, 0);
++  assert.match(r.out, /falta firma externa/);
++  assert.doesNotMatch(r.out, /Continúa ahora/);
++  assert.match(readFileSync(p.ledger, "utf8"), /"sig":/, "the hook still wrote its signed line");
++  const blocked = launch(p, "developer", "docs/specs/g.md Fase: B");
++  assert.equal(blocked.code, 2);
++  assert.match(blocked.out, /firma externa/);
++  assert.equal(write(p, "proxy.ts").code, 2);
++  assert.equal(authorize(p).code, 2);
++});
++
++test("external confirmation: only a valid signature of this content counts", () => {
++  const p = project();
++  governed(p, "g", { sensitive: ["proxy.ts"] });
++  const sig = join(p.dir, "docs/specs/g.md.sig");
++  const statement = () => spawnSync("node", [HOOK, "statement", "docs/specs/g.md"], { input: "{}", env: p.env, encoding: "utf8" }).stdout;
++  const gate = () => launch(p, "developer", "docs/specs/g.md Fase: B").code;
++  p.run("record", { prompt: "apruebo docs/specs/g.md", unsigned: true });
++  const text = statement();
++
++  writeFileSync(sig, sign(newKey(), text));
++  assert.equal(gate(), 2, "another key");
++  writeFileSync(sig, sign(KEY, text, "other-namespace"));
++  assert.equal(gate(), 2, "another namespace");
++  writeFileSync(sig, sign(KEY, text.replace("\nB\n", "\nC\n")));
++  assert.equal(gate(), 2, "another phase");
++  writeFileSync(sig, "not a signature");
++  assert.equal(gate(), 2, "garbage");
++
++  writeFileSync(sig, sign(KEY, text));
++  assert.equal(gate(), 0, "valid signature");
++  assert.equal(write(p, "proxy.ts").code, 0);
++
++  rmSync(p.env.SPEC_ALLOWED_SIGNERS);
++  assert.equal(gate(), 2, "no signers file fails closed");
++  signersFor(KEY, p.env.SPEC_ALLOWED_SIGNERS);
++
++  p.write("g", p.file("g") + "- cambio\n");
++  assert.equal(gate(), 2, "content changed");
++});
++
++test("external confirmation: key material and signers are out of reach of Write and Edit", () => {
++  const p = project();
++  governed(p, "g", { sensitive: ["spec-allowed-signers"], governance: ["spec-allowed-signers"] });
++  approve(p);
++  assert.equal(authorize(p).code, 2, "cannot be authorized");
++  const guard = (file_path) => p.run("guard", { session_id: SESSION, tool_input: { file_path, content: "x" } }).code;
++  assert.equal(guard(join(p.dir, "spec-allowed-signers")), 2);
++  assert.equal(guard(join(homedir(), ".claude/spec-allowed-signers")), 2);
++  assert.equal(guard(join(homedir(), ".ssh/spec_approval")), 2);
++});
++
++// R4: las restricciones de agente no dependen de que su frontmatter cargue.
++
++test("agent limits: settings hooks enforce them by agent_type", () => {
++  const p = project();
++  const guard = (agent_type, rel) =>
++    p.run("guard", { agent_type, session_id: SESSION, tool_name: "Edit", tool_input: { file_path: join(p.dir, rel), old_string: "a", new_string: "b" } }).code;
++  assert.equal(guard("orchestrator", "README.md"), 2);
++  assert.equal(guard("orchestrator", "docs/specs/a.md"), 0);
++  assert.equal(guard("developer", "docs/specs/a.md"), 2);
++  assert.equal(guard("developer", "README.md"), 0);
++  assert.equal(guard(undefined, "README.md"), 0);
++  const shell = (agent_type, tool_name, command) => p.run("relay", { agent_type, tool_name, tool_input: { command } }).code;
++  assert.equal(shell("developer", "Bash", "wc -l docs/specs/approvals.jsonl"), 2);
++  assert.equal(shell("developer", "PowerShell", "Set-Content docs/specs/a.md x"), 2);
++  assert.equal(shell("developer", "Bash", "npx vitest run"), 0);
++  assert.equal(shell(undefined, "Bash", "wc -l docs/specs/approvals.jsonl"), 0);
++});
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 0b9a4de..3946ed2 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -37,7 +37,7 @@ Read `docs/SETUP.md` before writing code. It is the source of truth for:
+ 
+ Run the full flow with `claude --agent orchestrator` (it must be the main thread: subagents can't spawn subagents). Details in `docs/SETUP.md` §3.
+ 
+-**Human approval is a hard blocker.** No SDD implementation starts until the user writes exactly **"apruebo docs/specs/<slug>.md"** in the chat. It covers only the spec's current phase and never authorizes governance files (`.claude/` except plans, projects and worktrees, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `.mcp.json`, `docs/SETUP.md`); those also need **"autorizo gobierno docs/specs/<slug>.md"**. Never infer approval, never mark a spec approved, never edit a ledger, and don't work around a block; `Modo: build` doesn't unlock sensitive paths. Claude may only write specs with `Estado: borrador`. The user may edit code directly; these rules bind Claude. Full mechanism, limits and residual risks: `docs/SETUP.md` §3. Enforced by `.claude/hooks/spec-approval.mjs` (tests: `npx vitest run .claude/hooks`).
++**Human approval is a hard blocker.** No SDD implementation starts until the user writes exactly **"apruebo docs/specs/<slug>.md"** in the chat and signs the spec's statement with their SSH key in their own terminal; neither step is ever done by Claude. It covers only the spec's current phase and never authorizes governance files (`.claude/` except plans, projects and worktrees, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `.mcp.json`, `docs/SETUP.md`); those also need **"autorizo gobierno docs/specs/<slug>.md"**. Never infer approval, never mark a spec approved, never edit a ledger, and don't work around a block; `Modo: build` doesn't unlock sensitive paths. Claude may only write specs with `Estado: borrador`. The user may edit code directly; these rules bind Claude. Full mechanism, limits and residual risks: `docs/SETUP.md` §3. Enforced by `.claude/hooks/spec-approval.mjs` (tests: `npx vitest run .claude/hooks`).
+ 
+ ## Stack
+ 
+diff --git a/docs/SETUP.md b/docs/SETUP.md
+index 5cc194c..5466532 100644
+--- a/docs/SETUP.md
++++ b/docs/SETUP.md
+@@ -246,13 +246,19 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
+ - **Nunca editables por un agente:** `docs/specs/approvals.jsonl`, `~/.claude/spec-privileged.jsonl`, `~/.claude/spec-approval.key`, `.git/`.
+ - **Rutas sensibles:** `.env*` salvo `.env.example`, `.github/workflows/`, `db/`, `migrations/`, `prisma/`, `drizzle/`, `proxy.*`, `middleware.*`, `scripts/db-*`, `lib/roles*`, `lib/db*`, y cualquier archivo o carpeta con `auth` en su nombre bajo `app/`, `modules/`, `components/`, `hooks/` o `lib/`. También en otro checkout: la spec de esta sesión no los autoriza allí.
+ - Una spec con todas las tareas de `## Plan` marcadas deja de autorizar rutas protegidas. Desmarcar casillas de una spec aprobada se bloquea.
++- **Confirmación externa:** el comando en el chat y su HMAC no prueban consentimiento humano: `claude -p` también los produce. Una aprobación solo vale con una firma SSH de la declaración de la spec, hecha por el usuario en su terminal con una clave protegida por frase o por llave de hardware, sin cargarla en `ssh-agent`:
++  1. Una vez: `ssh-keygen -t ed25519 -f ~/.ssh/spec_approval`, y en `~/.claude/spec-allowed-signers` la línea `approver namespaces="spec-approval" <contenido de spec_approval.pub>`.
++  2. Cada aprobación, tras `apruebo`, en Git Bash desde la raíz del repo (en PowerShell 5.1 la tubería falla): `echo {} | node .claude/hooks/spec-approval.mjs statement docs/specs/<slug>.md | ssh-keygen -Y sign -f ~/.ssh/spec_approval -n spec-approval > docs/specs/<slug>.md.sig`.
+ - Ninguna aprobación de spec autoriza desplegar, borrar datos ni migrar producción: eso requiere una orden expresa.
+ 
+ **Riesgos residuales:** estos controles evitan desvíos de un agente; no aíslan frente a un proceso local con los mismos permisos.
+ 
+ - Bash y PowerShell pueden escribir en rutas protegidas. El hook no analiza comandos; `reviewer` lo detecta en el diff real.
+ - Un proceso del mismo usuario del sistema puede leer la clave HMAC y forjar registros.
+-- `UserPromptSubmit` también se dispara con mensajes de otra sesión y tareas programadas, y nada identifica el origen. `relay` y el `deny` sobre `claude` bloquean el comando literal, no un texto codificado ni un script que lance otra sesión.
++- `UserPromptSubmit` también se dispara con `claude -p`, mensajes de otra sesión y tareas programadas, y nada identifica el origen; por eso se exige la firma externa.
++- Un proceso del mismo usuario puede reemplazar `~/.claude/spec-allowed-signers` o el hook por shell. La firma impide falsificar consentimiento mientras esos archivos sigan íntegros; solo un archivo de administrador o una verificación en servidor lo garantizan.
++- Los hooks de frontmatter no corren en una carpeta sin confianza aceptada, y `claude -p` no la pide. Los controles de gobierno viven en `.claude/settings.json`.
++- Sin firma, una aprobación no desbloquea nada. `relay` y el `deny` sobre `claude` bloquean el comando literal, no un texto codificado ni un script que lance otra sesión.
+ - En una sesión de escritorio con worktree corre la copia del hook del checkout principal. Si esa copia ya incluye la comprobación de integridad y difiere de la del worktree, bloquea; una copia anterior no lo detecta.
+ - Mientras una spec con su plan abierto liste una ruta sensible, `Modo: build` puede editarla: el hook no conoce la tarea. `reviewer` lo revisa en el diff.
+ - Las únicas capas fuera del alcance del usuario local son `managed-settings.json`, protegido por administrador, y reglas del servidor Git.
+@@ -303,7 +309,7 @@ Usuario → Orquestador → Spec → [aprobación del usuario] → Developer(s)
+      - `UserPromptSubmit`: registra la aprobación. Ver riesgos residuales sobre el origen del mensaje.
+      - `relay`: las herramientas no pueden enviar el comando literal de aprobación.
+      - Tras una aprobación válida, el hook indica a Claude que continúe de inmediato con la implementación siguiendo el flujo del orquestador (developer según el plan y después reviewer), sin volver a pedir confirmación.
+-     - **Developer** (hook en el frontmatter de `.claude/agents/developer.md`): `docs/specs/` es de solo lectura para él; se bloquea cualquier escritura ahí y cualquier comando de terminal que mencione `docs/specs`.
++     - **Developer** (`guard` y `relay` por `agent_type`, también sin confianza de carpeta): `docs/specs/` es de solo lectura para él; se bloquea cualquier escritura ahí y cualquier comando de terminal que mencione `docs/specs`.
+      - `PreToolUse` (Write/Edit/NotebookEdit): aplica la tabla de autorizaciones por archivo real, en cualquier agente y en el hilo principal. Además, Claude solo puede crear o editar specs con `Estado: borrador`; escribir `aprobado` o quitar la línea `Estado:` se bloquea.
+      - `PreToolUse`: antes de lanzar un agente que implementa, exige que cada spec citada tenga una aprobación registrada, que su contenido no haya cambiado (marcar casillas sí se permite) y que el prompt declare `Fase: <fase actual>`. `developer` sin spec solo se lanza con `Modo: build`, que no autoriza rutas protegidas.
+      - **Fallo del hook:** `onFailure: block` impide que un `PreToolUse` roto deje pasar la acción. Si bloquea por error, el usuario corrige `.claude/settings.json` a mano.
