@@ -11,6 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { Profile, ProfileFieldKey } from "../types/profile.types";
+import { formatPhone, PHONE_TYPE_LABELS } from "../utils/phone";
 import { formatProfileValue, OPTIONAL_PROFILE_FIELDS, PROFILE_FIELD_LABELS } from "../utils/profileFields";
 import { SectionLabel } from "./AccountSummary";
 import { ProfileFieldDialog } from "./ProfileFieldDialog";
@@ -103,8 +104,12 @@ export function ProfileView({ profile: initialProfile }: { profile: Profile }) {
 
   const name = user.fullName || user.primaryEmailAddress?.emailAddress || "Usuario";
   const primaryEmail = user.primaryEmailAddress;
-  // R30: without a primary email, only "Añadir correo".
-  const secondaryEmails = primaryEmail ? user.emailAddresses.filter((email) => email.id !== primaryEmail.id) : [];
+  // R30: without a primary email, only "Añadir correo". R8: only verified secondaries are listed.
+  const secondaryEmails = primaryEmail
+    ? user.emailAddresses.filter(
+        (email) => email.id !== primaryEmail.id && email.verification?.status === "verified",
+      )
+    : [];
   const filledOptional = OPTIONAL_PROFILE_FIELDS.filter((key) => profile[key]);
   const missingOptional = OPTIONAL_PROFILE_FIELDS.filter((key) => !profile[key]);
 
@@ -125,7 +130,15 @@ export function ProfileView({ profile: initialProfile }: { profile: Profile }) {
         <Row label="Nombre" value={user.firstName} onOpen={openClerk} />
         <Row label="Apellido" value={user.lastName} onOpen={openClerk} />
         {profile.phone ? (
-          <Row label={PROFILE_FIELD_LABELS.phone} value={profile.phone} onOpen={(from) => edit("phone", from)} />
+          <Row
+            label={PROFILE_FIELD_LABELS.phone}
+            value={
+              profile.phoneType
+                ? `${PHONE_TYPE_LABELS[profile.phoneType]} · ${formatPhone(profile.phone)}`
+                : formatPhone(profile.phone)
+            }
+            onOpen={(from) => edit("phone", from)}
+          />
         ) : (
           <Row label="Añadir teléfono" primary onOpen={(from) => edit("phone", from)} />
         )}
@@ -177,6 +190,7 @@ export function ProfileView({ profile: initialProfile }: { profile: Profile }) {
         finalFocus={() => (opener.current?.isConnected ? opener.current : null)}
         field={field}
         value={profile[field]}
+        phoneType={profile.phoneType}
         onSaved={(saved) => {
           setProfile(saved);
           setDialogOpen(false);
