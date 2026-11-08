@@ -2,6 +2,90 @@
 
 Registro de cambios propuestos, pruebas y riesgos residuales. Spec: `docs/specs/template-v2-professional-workflow.md`.
 
+**Estado actual: FASE B COMPLETADA — VALIDADA EN MAIN (2026-11-08).** PR #1 y PR #2 integrados en `main` (`80fe2b7`) de `ronalehm/next-js-template-v2`. Aprobación renovada y firmada por el usuario en el checkout `template-v2-pro`, con controles en PASS. Ver "Validación en main y cierre de Fase B". Las líneas de estado siguientes son históricas.
+
+## Validación en main y cierre de Fase B (2026-11-08)
+
+**Estado propuesto: FASE B COMPLETADA — VALIDADA EN MAIN.**
+
+### 1. Integración y versión validada
+
+- Repositorio: `ronalehm/next-js-template-v2` (privado).
+- Checkout: `C:\Users\ronal\template-v2-pro`.
+- Rama: `main`.
+- HEAD: `80fe2b705edb2e1fca1a6c6b6552cdf64a9690f0`.
+- PR #1: gobierno y flujo de agentes, integrado.
+- PR #2: remediación de dependencias, integrado.
+- Árbol de trabajo inicialmente limpio tras la actualización de `main`, antes de renovar la aprobación.
+
+La implementación de Fase B quedó integrada mediante el PR #1. El PR #2 actualizó las dependencias sin modificar los controles de gobierno.
+
+### 2. Validación de controles en main
+
+| Comprobación | Resultado |
+|---|---|
+| Firma SSH funcional de Fase B | PASS |
+| Gate con `Fase: B` | PASS — exit 0 |
+| Gate con `Fase: C` | PASS — exit 2 |
+| Guard de `CLAUDE.md` | PASS — exit 2 |
+| Guard de `docs/specs/approvals.jsonl` | PASS — exit 2 |
+| Relay de aprobación mediante herramientas | PASS — exit 2 |
+| Tests automatizados de hooks | PASS — 47/47 |
+| Instalación con `npm ci --ignore-scripts` | PASS |
+| Lint | PASS |
+| Build con Next.js 16.4.5 | PASS |
+
+La aprobación funcional se renovó en el checkout principal el 2026-11-08 UTC. Se generaron dos registros de aprobación para la misma spec y una firma SSH nueva, válida para esta carpeta.
+
+No se requirió autorización privilegiada de gobierno, ya que no se editaron archivos de gobierno.
+
+### 3. Conciliación del plan y criterios de aceptación
+
+**Plan de implementación:** 8 de 8 tareas completadas y respaldadas por evidencia.
+
+**Criterios de aceptación:** AC-01 a AC-22 conciliados con pruebas, código y evidencia documentada.
+
+No se identificaron tareas funcionales pendientes de implementación dentro del alcance acordado de Fase B.
+
+Las casillas de aceptación permanecen sin marcar en la spec. Su estado documental no modifica los resultados verificados ni autoriza nuevas implementaciones.
+
+### 4. Limitaciones y riesgos residuales
+
+Se conservan los riesgos y las pruebas clasificadas como NO VERIFICADO en las evidencias anteriores.
+
+En particular:
+
+- Los hooks no proporcionan aislamiento absoluto frente a procesos locales con los mismos permisos del propietario.
+- Algunas verificaciones del entorno real de Claude Code no se realizaron.
+- No se repitió la prueba de mutación sobre `fix-1`, conforme a la decisión documentada.
+- No se considera que una firma válida en este checkout pueda reutilizarse automáticamente en otra carpeta.
+
+Estas limitaciones fueron documentadas y aceptadas dentro de la Definition of Done de Fase B. No deben presentarse como controles exhaustivamente verificados.
+
+### 5. Estado de aprobación y cambios locales
+
+La renovación produjo modificaciones locales en:
+
+- `docs/specs/approvals.jsonl`: dos registros nuevos.
+- `docs/specs/template-v2-professional-workflow.md.sig`: firma renovada.
+- `docs/specs/template-v2-professional-workflow.md`: diferencia de finales de línea, sin cambio de contenido normalizado.
+
+No se ha autorizado todavía incorporar esos cambios a un commit.
+
+Las referencias históricas a estados anteriores, como «Sin commit» o «Checkout principal sin modificar», se conservan como evidencia del momento en que fueron registradas y no describen el estado final de integración.
+
+### 6. Dictamen
+
+**FASE B COMPLETADA — VALIDADA EN MAIN, con riesgos residuales aceptados.**
+
+La implementación está integrada, las ocho tareas del plan están completadas y los criterios de aceptación cuentan con la evidencia exigida por su alcance.
+
+No se requieren nuevas pruebas ni implementaciones para cerrar Fase B, salvo que aparezca un defecto concreto y reproducible.
+
+La portabilidad de aprobaciones y la limpieza de información específica del entorno se gestionarán de forma independiente antes de reutilizar la plantilla en otro proyecto.
+
+**Fase C:** no iniciada.
+
 **Estado: FASE B COMPLETADA — VALIDACIÓN LOCAL (2026-11-07).** `fix-1` aplicada, R4 y R7 corregidos y probados en sesión real, y aprobación con firma SSH externa del usuario verificada por `gate`. Riesgos aceptados en "Cierre de Fase B". Sin commit. Checkout principal sin modificar.
 
 **Revisión del PR #1 (2026-11-07):** `fix-2` y `fix-2b` aplicadas por el usuario a mano sobre `792bcb2`. Validación local PASS; sin commit.
