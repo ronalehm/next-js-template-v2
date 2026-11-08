@@ -5,12 +5,13 @@
 - ID: SPEC-auth-clerk-neon
 - Riesgo: alto (autenticación, sesión, roles y permisos, esquema y migraciones, borrado de registros, dependencias críticas, integraciones externas)
 - Ruta: SDD-ADVANCED
-- Fase actual: AUTH-2.1
-- Fases: AUTH-1, AUTH-2, AUTH-2.1, AUTH-3. La aprobación autoriza solo la fase actual; pasar de fase exige editar esta spec y aprobarla de nuevo.
-- Base AUTH-2.1: `main` en `a8494b6` (merge del PR #7, encabezado de `AGENTS.md` que genera `next dev`, sobre el PR #6 de la spec visual y AUTH-2). Rama `feat/auth-dashboard-design`, worktree `C:/Users/ronal/template-v2-design`. La aprobación de AUTH-2.1 se firma en este worktree (la firma incluye la raíz); la firma y la línea del registro de AUTH-2 no autorizan AUTH-2.1.
+- Fase actual: AUTH-2.2
+- Fases: AUTH-1, AUTH-2, AUTH-2.1, AUTH-2.2, AUTH-3. La aprobación autoriza solo la fase actual; pasar de fase exige editar esta spec y aprobarla de nuevo.
+- Base AUTH-2.2: `main` en `18a2414` (merge del PR #8, AUTH-2.1). Rama `feat/auth-profile`, worktree `C:/Users/ronal/template-v2-profile`. La aprobación de AUTH-2.2 se firma en este worktree (la firma incluye la raíz); la firma y las líneas del registro de fases anteriores no autorizan AUTH-2.2.
 - Historial:
   - AUTH-1 cerrada: base `18e3dc6`, rama `feat/auth-clerk-neon`, integrada en `main` por `0cfcd4a`. Evidencia: `docs/evidence/auth-clerk-neon.md`.
   - AUTH-2 cerrada: base `0cfcd4a`, rama `feat/auth-dashboard`, aprobada con el hash `51681ff2…cdb4`, integrada en `main` por `fc97323` (PR #5). Evidencia: `docs/evidence/auth-dashboard.md`.
+  - AUTH-2.1 cerrada: base `a8494b6`, rama `feat/auth-dashboard-design`, aprobada con el hash `f28d7605…a756ae2`, integrada en `main` por `18a2414` (PR #8). Evidencia: `docs/evidence/auth-dashboard-design.md`.
 - Referencias visuales: `docs/specs/users-management-design.md` (spec visual) y Figma `ihJfCObzth2fgdsWId9HBK` (19 pantallas), con la jerarquía de D17.
 - Fuente: `origin/backup/template-v2-wip-2026-11-06` (`b21d514`), portada archivo por archivo con `git show`. Nunca merge, cherry-pick ni checkout de la rama.
 - Antecedente: `docs/specs/template-v2-professional-workflow.md`, "Después de validar Fase B", punto 1. Decisiones heredadas: portar desde la rama de respaldo y rol en `app_users`.
@@ -31,7 +32,20 @@ Incluye:
   - Inicio del panel, Ver perfil (solo lectura), Configuración (preferencias de interfaz del dispositivo) y Cerrar sesión.
   - Pantallas completas: 02, 10, 13 y 17. Parciales: 08 y 09 (ver "Trazabilidad de pantallas").
   - Sin modelos de datos nuevos, sin escrituras en Neon ni en Clerk y sin server actions (R19 a R29).
+- AUTH-2.2: perfil personal completo (pantallas 08 y 19). Incluye:
+  - Perfil minimalista en tres grupos: Información personal, Correos y Seguridad (D29).
+  - Teléfono y campos opcionales (Cargo, Empresa, Cumpleaños, Sitio web, Nota personal) en la tabla nueva `user_profiles`, privados y editables solo por su dueño (D30, D31).
+  - Sincronización de nombre, apellido y correo principal de Clerk a `app_users` sin webhooks (D32). Resuelve P-POST-2 antes de AUTH-3.
+  - Migración `0002_user_profiles.sql`, que ejecuta el propietario (R34).
 - AUTH-3: módulo `users`: listar, invitar, cambiar rol, revocar acceso (baja lógica) y reenviar invitaciones.
+
+No incluye en AUTH-2.2:
+- Formularios propios de identidad: nombre, apellido, foto, correos, contraseña y sesiones siguen solo en el modal de Clerk (D24).
+- Ubicación, "Campo personalizado", zona horaria y formato de fecha editables, y avisos por correo.
+- Mostrar `user_profiles` a administradores o en cualquier otra pantalla (D31).
+- Webhooks de Clerk, cambios en la configuración de Clerk y llamadas a Clerk fuera de `/dashboard/profile` y de la vinculación de R2.
+- Pantallas de AUTH-3, el ítem "Usuarios" y cualquier cambio en `lib/roles.ts`, `lib/navigation.ts`, `proxy.ts`, `lib/db.ts`, `scripts/`, `app/layout.tsx`, `app/globals.css`, `next.config.ts`, `.env.example` y `.gitignore`.
+- Dependencias npm nuevas. Ejecutar `db:migrate` desde un agente.
 
 No incluye en AUTH-2.1 (pospuesto e identificado en "Pospuesto" y "Propuestas para AUTH-3"):
 - Migraciones nuevas (`0002_user_profiles.sql`), tablas o columnas.
@@ -54,7 +68,7 @@ No incluye en AUTH-2 (queda para AUTH-3 o fuera de alcance):
 No incluye:
 - Cambios en gobierno (`.claude/`, `CLAUDE.md`, `AGENTS.md`, `docs/SETUP.md`), en la spec de Fase B ni en Fase C.
 - Webhooks de Clerk, organizaciones, multi-tenant, SSO, billing.
-- Edición de nombre o perfil con formularios propios del panel: la hace el usuario en la UI de Clerk (`UserButton` en AUTH-2, modal `openUserProfile()` desde AUTH-2.1, D24).
+- Edición de identidad (nombre, apellido, foto, correos, contraseña) con formularios propios del panel: la hace el usuario en la UI de Clerk (`UserButton` en AUTH-2, modal `openUserProfile()` desde AUTH-2.1, D24). Los datos opcionales de AUTH-2.2 no son identidad (D30).
 - Alta directa de usuarios sin invitación y registro abierto.
 - Borrado físico de filas de `app_users` desde la aplicación.
 - Reactivar un usuario revocado (se decide al reaprobar AUTH-3).
@@ -143,6 +157,23 @@ Decisiones del usuario para AUTH-2.1 (2026-11-07 y 2026-11-08):
 - **D26. Avatar.** Foto `imageUrl` de Clerk con el `<img>` de shadcn `avatar`: sin `next/image`, así que `next.config.ts` no cambia. Sin foto: iniciales sobre un degradado elegido de forma estable por el id de Clerk.
 - **D27. Movimiento.** Transiciones CSS (`cubic-bezier` sin rebote) en lugar de springs. Con `prefers-reduced-motion: reduce` o con la preferencia "Reducir movimiento", solo fundidos de opacidad de 150 ms. El cambio de tema usa un fundido de 200 ms sobre `background-color` y `color`. Sin librería de animación.
 
+Decisiones del propietario para AUTH-2.2 (2026-11-08, "Perfil minimalista estilo Apple" y respuestas O1–O3):
+
+- **D28. Fase AUTH-2.2.** Fase propia entre AUTH-2.1 y AUTH-3: perfil extendido, su persistencia y la sincronización de identidad. AUTH-3 empieza con P-POST-2 ya resuelta. Enmienda D23 solo en lo que dice D30 a D32: AUTH-2.2 escribe en Neon (la fila propia de `user_profiles` y las columnas de identidad de la fila propia de `app_users`) y lee Clerk en el servidor solo en `/dashboard/profile`. Sigue sin escribir en Clerk.
+- **D29. Perfil minimalista (pantallas 08 y 19).** Principio: mostrar lo necesario y revelar lo adicional solo cuando el usuario lo pide.
+  - Encabezado sin tarjeta: foto, nombre completo y correo principal de Clerk, y "Cambiar foto". Sin rol ni insignia de estado (O2): el rol ya se ve en Inicio.
+  - Tres grupos y ninguna tarjeta más: Información personal, Correos y Seguridad (R30).
+  - Sin la nota con candado de AUTH-2.1, sin iconos decorativos y sin textos explicativos. Chevrons solo en filas con acción.
+- **D30. Datos opcionales en `user_profiles`.** Teléfono de contacto, Cargo, Empresa, Cumpleaños, Sitio web y Nota personal, en una tabla 1:1 con `app_users` (migración `0002`). No son identidad: no se verifican, no autentican y no se copian a Clerk. Resuelve P-POST-1 salvo la zona horaria y el formato de fecha, que siguen pospuestos. Ubicación y "Campo personalizado" se descartan.
+- **D31. Privacidad por defecto.** Solo el dueño lee y escribe su fila de `user_profiles`, siempre identificado por la sesión en el servidor (`getActor()`), nunca por un id enviado por el navegador. Ningún administrador ni ninguna otra pantalla ve estos datos. Mostrar un campo a otros exige una decisión aprobada por campo en una fase posterior.
+- **D32. Sincronización de identidad sin webhooks (P-POST-2, A1, O3).**
+  - Al vincular (R2), la misma sentencia copia `first_name` y `last_name` de Clerk.
+  - Al renderizar `/dashboard/profile`, el servidor relee `currentUser()` y actualiza nombre, apellido y correo principal **verificado** (en minúsculas) de la fila propia de `app_users`, solo si cambiaron.
+  - Si otra fila ya usa ese correo (restricción `unique`), el correo no cambia y se conserva el anterior. Nombre y apellido se sincronizan igual, también cuando la colisión ocurre por concurrencia (otra fila toma el correo entre la comprobación y la escritura): el correo y los nombres se escriben en sentencias independientes, así que un fallo del correo no deshace los nombres.
+  - Un fallo de la sincronización se registra en el servidor y la página se muestra igual.
+  - Ninguna otra petición consulta a Clerk para esto. Límite aceptado: un cambio hecho en Clerk llega a `app_users` cuando su dueño vuelve a abrir el perfil.
+- **D33. Tipografía sin cambios (O1).** Se mantiene D20b: fuente del sistema de Apple con Inter de respaldo. Geist no vuelve.
+
 ## Inventario de la rama de respaldo
 
 | Archivo del respaldo | Decisión | Motivo |
@@ -188,15 +219,15 @@ Decisiones del usuario para AUTH-2.1 (2026-11-07 y 2026-11-08):
 
 Se conserva el diseño completo. Lo pospuesto queda señalado.
 
-| # | ID Figma | Pantalla | Fase | Ruta | Estado en AUTH-2.1 |
+| # | ID Figma | Pantalla | Fase | Ruta | Estado |
 |---|---|---|---|---|---|
 | 02 | `3:277` | Menú del avatar | AUTH-2.1 | pie del shell | Completa (R21) |
-| 08 | `4:1223` | Ver perfil | AUTH-2.1 parcial | `/dashboard/profile` | Tarjeta, nombre, correo, rol, estado, CORREOS y SEGURIDAD (R23). Nombre y apellido se editan solo en el modal de Clerk (D24). **Pospuesto:** filas Teléfono y Cargo, y "+ Añadir información" |
+| 08 | `4:1223` | Ver perfil | AUTH-2.2 | `/dashboard/profile` | Completa en AUTH-2.2 (R30), con la estructura de D29. En AUTH-2.1 fue parcial (R23) |
 | 09 | `4:1328` | Configuración | AUTH-2.1 parcial | `/dashboard/settings` | Apariencia Claro / Oscuro / Sistema, Idioma y región en solo lectura, Densidad y Reducir movimiento (R24). **Pospuesto:** zona horaria y formato de fecha editables, y Avisos por correo |
 | 10 | `4:1422` | Cerrar sesión | AUTH-2.1 | `/dashboard/sign-out` | Completa (R25) |
 | 13 | `8:1848` | Sidebar contraída | AUTH-2.1 | shell | Completa (R20). La lista de fondo es de AUTH-3 |
 | 17 | `9:2916` | Inicio (user) | AUTH-2.1 | `/dashboard` | Completa (R22), con preferencias en solo lectura |
-| 19 | `10:2848` | Perfil: añadir información | **Pospuesta** | `/dashboard/profile` | Depende de P-POST-1 |
+| 19 | `10:2848` | Perfil: añadir información | AUTH-2.2 | `/dashboard/profile` | Completa en AUTH-2.2 (R31), sin Ubicación ni "Campo personalizado" (D30) |
 | 01 | `3:34` | Lista (superadmin) | AUTH-3 | `/dashboard/users` | Propuesta. Depende de P-AUTH3-1 y P-AUTH3-2 |
 | 03 | `3:542` | Acciones de fila (superadmin) | AUTH-3 | `/dashboard/users` | Propuesta. P-AUTH3-3 |
 | 04 | `3:794` | Invitar | AUTH-3 | diálogo | Propuesta (CA-13) |
@@ -216,15 +247,15 @@ Los ID salen de la spec visual: la API de Figma no estuvo disponible para verifi
 
 Sin implementar. Se decide antes de su fase.
 
-- **P-POST-1. Campos opcionales y preferencias persistentes.** Teléfono, Cargo, Empresa, Cumpleaños, Sitio web, Ubicación (pantallas 08 y 19), y zona horaria y formato de fecha editables. Propuesta anterior: tabla `user_profiles` 1:1 en Neon (migración `0002`). Queda sin aprobar y sin fase asignada.
-- **P-POST-2. Sincronización del nombre entre Clerk y Neon. Dependencia obligatoria de AUTH-3.** Ninguna funcionalidad de AUTH-3 que use los nombres guardados en Neon se habilita sin resolverla y aprobarla antes: buscar u ordenar por nombre, mostrar nombres en la lista o el detalle desde `app_users`, o editar nombres desde el panel (pantalla 05). Mientras tanto, la única fuente de nombres es Clerk. Opciones a evaluar:
+- **P-POST-1. Campos opcionales y preferencias persistentes.** Resuelta en AUTH-2.2 para los campos del perfil (D30). Siguen pospuestos la zona horaria y el formato de fecha editables.
+- **P-POST-2. Sincronización del nombre entre Clerk y Neon. Dependencia obligatoria de AUTH-3.** Resuelta en AUTH-2.2 con la primera opción, ampliada al correo principal (D32). Texto original: Ninguna funcionalidad de AUTH-3 que use los nombres guardados en Neon se habilita sin resolverla y aprobarla antes: buscar u ordenar por nombre, mostrar nombres en la lista o el detalle desde `app_users`, o editar nombres desde el panel (pantalla 05). Mientras tanto, la única fuente de nombres es Clerk. Opciones a evaluar:
   - Copiar el nombre al vincular la cuenta (R2, toca `lib/auth.ts`).
   - Escribir en Clerk y Neon en la misma acción.
   - Leer los nombres de Clerk por página.
 
 ## Propuestas para AUTH-3
 
-Pendientes de aprobación al reaprobar AUTH-3. No se implementan en AUTH-2.1.
+Pendientes de aprobación al reaprobar AUTH-3. No se implementan en AUTH-2.1 ni en AUTH-2.2. El 2026-11-08 el propietario aceptó como dirección para redactar AUTH-3: P-AUTH3-1 a P-AUTH3-6 tal como están, el panel no edita nombres (pantalla 05 solo cambia el rol) y AUTH-3 no lee `user_profiles` (D31). Se formalizan al redactar y aprobar AUTH-3.
 
 - **P-AUTH3-1.** La lista lee `app_users`. Buscar, ordenar o mostrar por nombre, y editar nombres (pantalla 05), quedan bloqueados hasta resolver P-POST-2.
 - **P-AUTH3-2.** "Último acceso" con una sola llamada a Clerk por página (`getUserList({ userId })`, `lastSignInAt`), solo para mostrarlo. R7 se matizaría: es una lectura de visualización, no una sincronización. "Sesiones activas" solo en el panel de detalle. Se quita "Invitado por".
@@ -236,7 +267,7 @@ Pendientes de aprobación al reaprobar AUTH-3. No se implementan en AUTH-2.1.
 ## Requisitos
 
 1. R1 — Rutas públicas: `/`, `/sign-in`, `/sign-up`. `/dashboard` y todo lo que cuelga de ella exige sesión en `proxy.ts` y permiso en el servidor (layout, página y service). El proxy no es el único control.
-2. R2 — `getActor()` resuelve el usuario actual según D2: busca por `clerk_user_id`; si esa fila existe, devuelve actor solo si `status = 'active'`, y `null` si está `invited` o `revoked`. Si no hay fila, vincula en una sola sentencia `update ... where email = $email and status = 'invited' and clerk_user_id is null returning ...` usando el email primario **verificado**, y la fila pasa a `active`. Si no, devuelve `null`. Una fila `revoked` o ya vinculada a otro `clerk_user_id` nunca se vincula.
+2. R2 — `getActor()` resuelve el usuario actual según D2: busca por `clerk_user_id`; si esa fila existe, devuelve actor solo si `status = 'active'`, y `null` si está `invited` o `revoked`. Si no hay fila, vincula en una sola sentencia `update ... where email = $email and status = 'invited' and clerk_user_id is null returning ...` usando el email primario **verificado**, y la fila pasa a `active`. Desde AUTH-2.2, esa misma sentencia copia también `first_name` y `last_name` de Clerk (D32). Si no, devuelve `null`. Una fila `revoked` o ya vinculada a otro `clerk_user_id` nunca se vincula.
 3. R3 — Roles `user`, `admin`, `superadmin`. Permisos: `dashboard:view` (los tres) y `users:manage` (`admin`, `superadmin`). `canManageRole(actor, target)` exige rango estrictamente mayor.
 4. R4 — Un admin solo invita, cambia de rol o revoca usuarios `user`. Un superadmin, `user` y `admin`. Nadie actúa sobre sí mismo ni asigna `superadmin` (D4).
 5. R5 — Toda server action valida su entrada con zod, comprueba permisos en el service y devuelve solo mensajes de `UsersError` o uno genérico; el error real se registra en el servidor (E8).
@@ -296,7 +327,7 @@ Pendientes de aprobación al reaprobar AUTH-3. No se implementan en AUTH-2.1.
       - El script en línea de `app/layout.tsx` (D21) aplica la clase `dark` antes de pintar.
       - Al cambiar de tema en Configuración, `useUiPreferences` actualiza `localStorage` y la clase de `<html>` en el momento.
       - Con Sistema, escucha `matchMedia("(prefers-color-scheme: dark)")`.
-    - **Densidad y movimiento:** `components/shared/UiPreferencesRoot.tsx` (cliente, en el layout de `/dashboard`) pone `data-density` y `data-reduce-motion` en el contenedor del panel.
+    - **Densidad y movimiento:** `components/shared/UiPreferencesRoot.tsx` (cliente, en el layout de `/dashboard`) pone `data-density` y `data-reduce-motion` en `<html>` mientras el panel está abierto, y los quita al salir, para que los menús y tooltips en portales también los reciban (así se implementó en AUTH-2.1; ver su evidencia).
 27. R27 — `parseUiPreferences(raw: unknown): UiPreferences` en `modules/account/utils/uiPreferences.ts`:
     - Valida lo leído de `localStorage`.
     - Ante JSON inválido o valores desconocidos, devuelve los valores por defecto: Sistema, Cómoda, sin reducir movimiento.
@@ -312,6 +343,40 @@ Pendientes de aprobación al reaprobar AUTH-3. No se implementan en AUTH-2.1.
     - Menús por teclado; Escape cierra y el foco vuelve al disparador.
     - Badges con texto.
 
+30. R30 — Perfil `/dashboard/profile` (pantalla 08, completa; sustituye a R23 desde AUTH-2.2):
+    - Encabezado sin tarjeta (D29): avatar L, nombre completo y correo principal de Clerk, y "Cambiar foto" (`openUserProfile()`).
+    - **Información personal:** Nombre y Apellido de Clerk (la fila abre el modal, D24). Teléfono con su valor, o "Añadir teléfono" en `text-primary` si está vacío. Después, una fila por cada campo opcional completado, en el orden Cargo, Empresa, Cumpleaños, Sitio web, Nota personal. Al final, "+ Añadir información" en `text-primary`, solo si falta algún campo opcional.
+    - **Correos:** el correo principal con una etiqueta pequeña "Principal"; los secundarios solo si existen; "Añadir correo". Sin correo principal, solo "Añadir correo". Todas las filas abren el modal de Clerk. Sin formulario propio.
+    - **Seguridad:** Contraseña y Sesiones activas, que abren el modal de Clerk sin duplicar su lógica.
+    - Los campos vacíos no se muestran ni ocupan espacio.
+31. R31 — Añadir, editar y quitar (pantalla 19):
+    - "+ Añadir información" abre un menú (`dropdown-menu`) con los campos opcionales que faltan. Elegir uno abre un diálogo (`dialog`) con un único campo, "Cancelar" y "Guardar".
+    - La fila de Teléfono ("Añadir teléfono" o su valor) y cada fila opcional abren el mismo diálogo con el valor actual y, si tiene valor, la acción "Quitar".
+    - Guardar un valor vacío equivale a quitarlo. Quitar el último dato deja la fila de `user_profiles` con todas sus columnas en `null`.
+    - Al guardar, la fila aparece, cambia o desaparece en Información personal sin recargar la página y sin crear secciones nuevas.
+    - Si falla, el diálogo sigue abierto con el error en español junto al campo y conserva lo escrito.
+32. R32 — Validación (`modules/account/schemas/profile.schema.ts`), la misma en cliente y servidor; el servidor es la autoridad:
+    - Entrada `{ field, value }` estricta: claves extra (por ejemplo un id de usuario) se rechazan.
+    - Todos los valores se recortan; una cadena vacía es `null`.
+    - Teléfono: máximo 30 caracteres; solo dígitos, espacios y `+ ( ) - .`.
+    - Cargo y Empresa: máximo 100 caracteres.
+    - Cumpleaños: fecha ISO `aaaa-mm-dd` válida, entre `1900-01-01` y hoy. Se edita con `<input type="date">` y se muestra en español largo ("12 de marzo de 1990").
+    - Sitio web: URL `http` o `https`, máximo 200 caracteres. Se muestra como enlace con `target="_blank"` y `rel="noopener noreferrer nofollow"`.
+    - Nota personal: máximo 500 caracteres, texto plano (se muestra escapado, sin HTML).
+33. R33 — Acción de servidor `updateProfileFieldAction` (`modules/account/actions/profile.actions.ts`, `"use server"`):
+    - Obtiene el actor con `getActor()`. Sin actor activo o sin `dashboard:view`, devuelve un error sin tocar la base.
+    - Valida con R32 y escribe solo la fila de `actor.id` y solo la columna del campo elegido, con un único `insert ... on conflict (user_id) do update` atómico, sin lectura previa (ver `setOwnProfileField` en "Diseño técnico"). Dos guardados de campos distintos, por ejemplo desde dos pestañas, no se pisan.
+    - Devuelve el perfil actualizado, un error de validación de R32 o un mensaje genérico. El error real se registra en el servidor y nunca llega al cliente (mismo criterio que E8).
+    - No hace `revalidatePath`: el cliente usa el perfil devuelto (evita otra lectura de Clerk por D32).
+34. R34 — Persistencia: migración `db/migrations/0002_user_profiles.sql` (contrato en "Contratos"), aplicada con `npm run db:migrate` por el propietario. Ningún agente la ejecuta.
+35. R35 — Sincronización (D32): `syncOwnIdentity(actor)` en `lib/auth.ts`, llamada por `app/dashboard/profile/page.tsx` después de `requirePermission`. Dos sentencias `update` independientes, ambas con `where id = actor.id` y sin efecto si su valor no cambió: primero `first_name` y `last_name`, después `email`. Una violación de `unique` (código `23505`) u otro error en la del correo se registra sin deshacer la de los nombres. Nunca lanza: registra el error y devuelve.
+36. R36 — Privacidad (D31): solo `modules/account/services/profile.service.ts` consulta `user_profiles`, y siempre filtrado por el id del actor. Ningún otro archivo, ni AUTH-3, lo lee.
+37. R37 — Diseño y accesibilidad del perfil:
+    - Tokens y estilo de la spec visual (D17, D20, D33): fondo `--muted`, tres grupos con `rounded-xl` y `shadow-card`, separadores `divide-y` con `--border`, filas de 44 px, acciones secundarias en `text-primary`.
+    - Filas como `<button>` con nombre accesible y anillo de foco; el diálogo atrapa el foco, Escape lo cierra y el foco vuelve a la fila.
+    - El campo del diálogo tiene `<label>` visible y su error está asociado con `aria-describedby`.
+    - Sin desbordes desde 375 px de ancho; los valores largos se truncan en la fila y se ven completos en el diálogo.
+
 ## Contratos
 
 Variables de entorno (`.env.example`, valores en `.env.local` del usuario):
@@ -322,6 +387,34 @@ Variables de entorno (`.env.example`, valores en `.env.local` del usuario):
 Tabla `app_users` (`db/migrations/0001_app_users.sql`):
 - `id uuid pk default gen_random_uuid()`, `clerk_user_id text unique null`, `email text not null unique check (email = lower(email))`, `first_name text`, `last_name text`, `role text not null default 'user' check (role in ('user','admin','superadmin'))`, `status text not null default 'invited' check (status in ('invited','active','revoked'))`, `invitation_id text unique null`, `created_at`, `updated_at timestamptz not null default now()`.
 - `schema_migrations(name text primary key, applied_at timestamptz not null default now())`, creada por el runner.
+
+Tabla `user_profiles` (AUTH-2.2, `db/migrations/0002_user_profiles.sql`):
+
+```sql
+create table user_profiles (
+  user_id uuid primary key references app_users(id) on delete cascade,
+  phone text check (char_length(phone) <= 30),
+  job_title text check (char_length(job_title) <= 100),
+  company text check (char_length(company) <= 100),
+  birthday date check (birthday >= date '1900-01-01'),
+  website text check (char_length(website) <= 200),
+  note text check (char_length(note) <= 500),
+  updated_at timestamptz not null default now()
+);
+```
+
+`on delete cascade` no se usa en la práctica (D10 no borra filas de `app_users`); solo evita filas huérfanas.
+
+Módulo `modules/account` (AUTH-2.2):
+- `schemas/profile.schema.ts`: `PROFILE_FIELD_KEYS` (`phone`, `jobTitle`, `company`, `birthday`, `website`, `note`), `profileSchema` (los seis campos, `string | null`) y `profileFieldInputSchema` (R32).
+- `types/profile.types.ts`: `Profile`, `ProfileFieldKey` y `ProfileFieldInput`, con `z.infer`. `ProfileActionResult = { ok: true; profile: Profile } | { ok: false; error: string }`.
+- `utils/profileFields.ts`: etiquetas en español, orden de R30 y `formatProfileValue(key, value)` (fecha larga en español para `birthday`).
+- `services/profile.service.ts` (`server-only`): `getOwnProfile(userId: string): Promise<Profile>` (todo `null` si no hay fila) y `setOwnProfileField(userId: string, field: ProfileFieldKey, value: string | null): Promise<Profile>`. `setOwnProfileField` elige la sentencia en un mapa cerrado `Record<ProfileFieldKey, …>` con una sentencia SQL escrita a mano por campo; ningún nombre de columna sale de la entrada y una clave fuera del mapa lanza un error sin tocar la base.
+- `server.ts` (`server-only`): exporta `getOwnProfile` para las páginas. `index.ts` sigue siendo seguro para el cliente y no lo reexporta.
+- `actions/profile.actions.ts` (`"use server"`): `updateProfileFieldAction(input: unknown): Promise<ProfileActionResult>` (R33).
+- `components/ProfileView.tsx` (`ProfileView({ profile }: { profile: Profile })`) y `components/ProfileFieldDialog.tsx`.
+
+`lib/auth.ts` (AUTH-2.2): `syncOwnIdentity(actor: Actor): Promise<void>` (R35). `Actor`, `getActor` y `requirePermission` no cambian de firma.
 
 `lib/roles.ts`:
 - `ROLES`, `Role`, `ROLE_LABELS`, `PERMISSIONS: Record<Permission, readonly Role[]>`, `Permission = "dashboard:view" | "users:manage"`.
@@ -364,13 +457,20 @@ Scripts:
 - El script de tema de `app/layout.tsx` es una cadena estática, sin interpolar datos de usuario ni del servidor. Solo lee una clave de `localStorage` y añade o quita la clase `dark`. Si algún día se activa una CSP, necesitará un nonce o un hash.
 - Los datos personales de Clerk (nombre, correo, foto) se muestran solo a su dueño.
 
+- AUTH-2.2 escribe solo la fila propia: `user_profiles` por `actor.id` (R33) y las columnas `first_name`, `last_name`, `email` y `updated_at` de `app_users` por `actor.id` (R35). Nunca cambia `role`, `status`, `clerk_user_id` ni `invitation_id`.
+- La acción de servidor es un punto de entrada público: comprueba sesión, fila activa y permiso en cada llamada, valida con zod estricto e ignora cualquier id del cliente (R33).
+- `app_users.email` solo toma el correo principal **verificado** de Clerk. Un correo ya usado por otra fila no se sobrescribe (D32), así que nadie puede quedarse con la fila de otra persona cambiando su correo en Clerk.
+- Sitio web: solo `http` y `https`, para evitar enlaces `javascript:`; se abre con `noopener noreferrer nofollow`. La nota se muestra como texto.
+- Los datos de `user_profiles` son privados del dueño (D31) y no aparecen en registros del servidor: los errores se registran sin los valores.
+
 ## Recuperación
 
 - AUTH-1: integrada en `main` por el merge `0cfcd4a` (PR #4, commit `13b9cd7` de `feat/auth-clerk-neon`). Deshacerla en `main` exige revertir ese merge (`git revert -m 1 0cfcd4a`) con una orden expresa del usuario. AUTH-2 no la toca.
 - Base de datos (solo rama de desarrollo de Neon, con orden expresa): `drop table app_users; delete from schema_migrations where name = '0001_app_users.sql';`. Alternativa sin pérdida: restaurar la rama de Neon a un punto anterior.
 - Clerk: instancia de desarrollo; los usuarios de prueba se borran desde su dashboard.
 - AUTH-2: integrada en `main` por el merge `fc97323` (PR #5, commit `8a3a8b2`). Deshacerla exige `git revert -m 1 fc97323` con una orden expresa del usuario. No hay cambios en Neon ni en Clerk que deshacer.
-- AUTH-2.1: parte de `a8494b6` y todo vive en `feat/auth-dashboard-design`, sin commits del agente. Para descartarla: `git worktree remove C:/Users/ronal/template-v2-design` y `git branch -D feat/auth-dashboard-design` desde `C:/Users/ronal/template-v2-pro`. Las preferencias en `localStorage` se borran desde el navegador. No hay cambios en Neon ni en Clerk que deshacer.
+- AUTH-2.1: integrada en `main` por el merge `18a2414` (PR #8, commit `131c481`). Deshacerla exige `git revert -m 1 18a2414` con una orden expresa del usuario. Las preferencias en `localStorage` se borran desde el navegador. No hay cambios en Neon ni en Clerk que deshacer.
+- AUTH-2.2: parte de `18a2414` y vive en `feat/auth-profile`. Para descartar el código antes de integrarlo: `git worktree remove C:/Users/ronal/template-v2-profile` y `git branch -D feat/auth-profile` desde `C:/Users/ronal/template-v2-pro`. Base de datos (solo rama de desarrollo de Neon, con orden expresa): `drop table user_profiles; delete from schema_migrations where name = '0002_user_profiles.sql';`, o restaurar la rama de Neon a un punto anterior. Los nombres y correos copiados a `app_users` no necesitan deshacerse: Clerk sigue siendo su fuente (D11) y AUTH-2.1 no los usa.
 
 ## Criterios de aceptación
 
@@ -506,6 +606,79 @@ Manuales (usuario, claves de desarrollo, sin escribir en Neon):
   - CA-11, CA-23 y CA-24 de AUTH-2 siguen cumpliéndose.
   - Fidelidad visual con la spec visual en las pantallas 02, 08 (parcial), 09 (parcial), 10, 13 y 17, en tema claro. El tema oscuro solo se compara con la spec, porque no tiene pantallas en Figma. Figma solo se consulta si hay dudas (D17).
 
+### AUTH-2.2
+
+Automáticos (Reviewer):
+- [ ] CA-34 — Tests de `modules/account/schemas/profile.schema.test.ts` (R32): cada campo acepta un valor válido y lo recorta; vacío o solo espacios da `null`; rechaza teléfono con letras o de más de 30, cargo y empresa de más de 100, fecha inválida, futura o anterior a 1900, URL `javascript:`, `ftp:` o sin protocolo, nota de más de 500, un `field` desconocido y cualquier clave extra (por ejemplo `userId`).
+- [ ] CA-35 — Tests de `modules/account/utils/profileFields.test.ts`: orden de R30 y `formatProfileValue` (fecha larga en español; el resto sin cambios).
+- [ ] CA-36 — Tests de `modules/account/services/profile.service.test.ts` con `@/lib/db` simulado: sin fila, `getOwnProfile` devuelve todo `null`; `setOwnProfileField` ejecuta exactamente una sentencia (sin `select` previo): un upsert sobre el `userId` recibido cuyo texto SQL solo nombra la columna del campo elegido, y devuelve el perfil de su `returning`; `null` vacía la columna; para cada uno de los seis campos se usa su propia sentencia del mapa cerrado; una clave fuera del mapa lanza un error sin llamar a la base; cada consulta lleva el `userId` como parámetro.
+- [ ] CA-37 — Tests de `lib/auth.test.ts` (los de CA-5 siguen pasando):
+  - La vinculación de R2 copia `first_name` y `last_name`.
+  - `syncOwnIdentity` actualiza nombre, apellido y correo cuando cambian, filtrando por `actor.id`.
+  - Con correo principal sin verificar o sin correo principal, no cambia el correo.
+  - Con el correo ya usado por otra fila, conserva el correo y actualiza el resto.
+  - Caso negativo de concurrencia: si la sentencia del correo falla con `23505`, la de nombre y apellido ya se ejecutó con `actor.id`, el correo no cambia y la función no lanza.
+  - Nombres y correo van en sentencias separadas: la del correo no escribe `first_name` ni `last_name`, y la de los nombres no escribe `email`.
+  - Si Clerk o la base fallan, no lanza.
+- [ ] CA-38 — Lectura del código:
+  - `updateProfileFieldAction` llama a `getActor()`, comprueba `dashboard:view`, valida con `profileFieldInputSchema` y solo usa `actor.id` (R33).
+  - `app/dashboard/profile/page.tsx` llama a `requirePermission("dashboard:view")`, después a `syncOwnIdentity` y a `getOwnProfile(actor.id)`.
+  - Toda consulta SQL está parametrizada; ningún nombre de columna sale de la entrada.
+- [ ] CA-39 — Privacidad (R36): `git grep -n "user_profiles" -- . ':(exclude)docs'` solo muestra `db/migrations/0002_user_profiles.sql` y `modules/account/services/profile.service.ts` (y su test).
+- [ ] CA-40 — Diseño (R30, R37, D29): tres grupos sin tarjetas extra; sin la nota con candado ni iconos decorativos; chevrons solo en filas con acción; sin colores sueltos (mismo criterio que CA-27).
+- [ ] CA-41 — Alcance cerrado de archivos respecto a `18a2414`, con el método de CA-22. Rutas permitidas:
+  - shadcn (`npx shadcn@latest add dialog`, sin `--overwrite` ni ediciones manuales; registro `base-nova` consultado el 2026-11-08 con `--dry-run`: crea `dialog.tsx`, omite `button.tsx` por idéntico y su única dependencia, `cn`, ya está instalada): `components/ui/dialog.tsx`.
+  - Datos y sesión: `db/migrations/0002_user_profiles.sql`, `lib/auth.ts`, `lib/auth.test.ts`.
+  - Módulo:
+    - `modules/account/schemas/profile.schema.ts`, `modules/account/schemas/profile.schema.test.ts`
+    - `modules/account/types/profile.types.ts`
+    - `modules/account/utils/profileFields.ts`, `modules/account/utils/profileFields.test.ts`
+    - `modules/account/services/profile.service.ts`, `modules/account/services/profile.service.test.ts`
+    - `modules/account/server.ts`, `modules/account/actions/profile.actions.ts`
+    - `modules/account/components/ProfileView.tsx`, `modules/account/components/ProfileFieldDialog.tsx`
+    - `modules/account/index.ts`
+  - Ruta: `app/dashboard/profile/page.tsx`.
+  - Flujo SDD:
+    - `docs/specs/auth-clerk-neon.md`, `docs/specs/auth-clerk-neon.md.sig`, `docs/specs/approvals.jsonl`
+    - `docs/evidence/auth-profile.md` (solo con orden del usuario)
+
+  Verificación en Git Bash desde la raíz del worktree. PASS = sin salida:
+
+  ```sh
+  { git diff --name-only --no-renames 18a2414; git ls-files -o --exclude-standard; } | sort -u | grep -v -x -F \
+    -e components/ui/dialog.tsx \
+    -e db/migrations/0002_user_profiles.sql -e lib/auth.ts -e lib/auth.test.ts \
+    -e modules/account/schemas/profile.schema.ts -e modules/account/schemas/profile.schema.test.ts \
+    -e modules/account/types/profile.types.ts \
+    -e modules/account/utils/profileFields.ts -e modules/account/utils/profileFields.test.ts \
+    -e modules/account/services/profile.service.ts -e modules/account/services/profile.service.test.ts \
+    -e modules/account/server.ts -e modules/account/actions/profile.actions.ts \
+    -e modules/account/components/ProfileView.tsx -e modules/account/components/ProfileFieldDialog.tsx \
+    -e modules/account/index.ts -e app/dashboard/profile/page.tsx \
+    -e docs/specs/auth-clerk-neon.md -e docs/specs/auth-clerk-neon.md.sig -e docs/specs/approvals.jsonl \
+    -e docs/evidence/auth-profile.md
+  ```
+
+  Se ejecuta al terminar T13 y T14, y en T15. Si el registro de shadcn genera otra ruta, el resultado es FAIL: la lista solo se amplía editando esta spec y aprobándola de nuevo.
+- [ ] CA-9 y CA-10 sobre AUTH-2.2 (base `18a2414`).
+
+Manuales (propietario, claves de desarrollo, rama de desarrollo de Neon):
+- [ ] CA-42 — Migración: `npm run db:migrate` dos veces imprime `SKIP 0001_app_users.sql` y `OK 0002_user_profiles.sql`, y después `SKIP` para ambas.
+- [ ] CA-43 — Perfil (R30, R31):
+  - Encabezado con foto, nombre y correo, sin tarjeta ni rol.
+  - Sin datos opcionales: Nombre, Apellido, "Añadir teléfono" y "+ Añadir información".
+  - Añadir Cargo y Sitio web: aparecen como filas en Información personal; el menú deja de ofrecerlos. Recargar los conserva.
+  - Editar y quitar un campo; guardar vacío lo quita. Con los cinco opcionales completos, "+ Añadir información" desaparece.
+  - Un valor inválido muestra el error en el diálogo sin cerrarlo.
+  - Correos: "Principal", secundarios solo si existen, "Añadir correo". Contraseña y Sesiones activas abren el modal de Clerk.
+  - Teclado, foco, tema claro y oscuro, y 375 px de ancho sin desbordes.
+- [ ] CA-44 — Privacidad: con otra cuenta activa, sus datos opcionales no aparecen en ninguna pantalla de la primera, y viceversa.
+- [ ] CA-45 — Sincronización (D32):
+  - Una invitación aceptada después de AUTH-2.2 deja nombre y apellido en `app_users` al vincular.
+  - Cambiar el nombre en el modal de Clerk y volver a abrir el perfil actualiza `first_name` y `last_name` de su fila.
+  - Cambiar el correo principal (verificado) actualiza `app_users.email`; `role` y `status` no cambian y el acceso se mantiene.
+  - CA-30 a CA-33 de AUTH-2.1 siguen cumpliéndose, salvo el perfil, que ahora sigue R30.
+
 ### AUTH-3 (detalle al reaprobar)
 
 - [ ] CA-13 — Un admin invita a un `user`; no puede invitar `admin` ni `superadmin` (UI y service).
@@ -531,6 +704,23 @@ Manuales (usuario, claves de desarrollo, sin escribir en Neon):
 - AUTH-2.1, `app/dashboard/layout.tsx`: mantiene `requirePermission("dashboard:view")`. `UiPreferencesRoot` envuelve el panel; `AppSidebar role={actor.role}` (contraíble, con `NavUser` en el pie); `SidebarInset` sobre `--muted`; barra móvil `md:hidden` con `SidebarTrigger`. Desaparecen la cabecera y el `UserButton` (D19).
 - AUTH-2.1, páginas de cuenta (Server Components): cada una llama a `requirePermission("dashboard:view")` y pasa `actor.role` y el estado `active` a un componente cliente de `modules/account` (`AccountSummary`, `ProfileView`, `SettingsView`, `SignOutCard`). Ese componente lee la identidad con `useUser()` y abre `openUserProfile()` y `signOut()` con `useClerk()` (D23, D24).
 - AUTH-2.1, tema: script en línea en `<head>` de `app/layout.tsx` + `useUiPreferences` (lectura y escritura validadas con `parseUiPreferences`, R26 y R27). Sin `next-themes`.
+- AUTH-2.2 empieza con `npm ci` en el worktree nuevo (no tiene `node_modules`). El developer lee antes la spec visual (pantallas 08 y 19), la guía de Server Actions en `node_modules/next/dist/docs/` y la de `currentUser()` de Clerk.
+- AUTH-2.2, `app/dashboard/profile/page.tsx` (Server Component): `const actor = await requirePermission("dashboard:view")`; `await syncOwnIdentity(actor)`; `const profile = await getOwnProfile(actor.id)` desde `@/modules/account/server`; `<ProfileView profile={profile} />`.
+- AUTH-2.2, `ProfileView` (cliente): identidad con `useUser()` y `openUserProfile()` (D23, D24); estado local con el `Profile` inicial, que sustituye por el que devuelve la acción. `ProfileFieldDialog` usa `dialog`, `input` (o `textarea` nativo para la nota y `<input type="date">` para el cumpleaños), `label` y `button`, valida con `profileFieldInputSchema` antes de enviar y llama a `updateProfileFieldAction` dentro de `useTransition`.
+- AUTH-2.2, `syncOwnIdentity`: lee `currentUser()` y calcula nombre, apellido y correo (este solo si el principal está verificado). Después, dos sentencias independientes (cada una se confirma sola con el cliente HTTP de Neon), cada una en su propio `try/catch`:
+  1. `update app_users set first_name = $n, last_name = $a, updated_at = now() where id = ${actor.id} and (first_name is distinct from $n or last_name is distinct from $a)`.
+  2. Solo si hay correo verificado: `update app_users set email = $c, updated_at = now() where id = ${actor.id} and email is distinct from $c and not exists (select 1 from app_users where email = $c and id <> ${actor.id})`.
+
+  El `not exists` cubre la colisión normal (cero filas afectadas, sin error). Si una carrera la salta y la sentencia 2 viola `unique` (`23505`), se registra y se ignora: la sentencia 1 ya quedó confirmada (D32).
+- AUTH-2.2, `setOwnProfileField`: una sola sentencia atómica por llamada, sin lectura previa. El mapa cerrado de campos asocia cada `ProfileFieldKey` a su sentencia fija, por ejemplo para `phone`:
+
+  ```sql
+  insert into user_profiles (user_id, phone) values (${userId}, ${value})
+  on conflict (user_id) do update set phone = excluded.phone, updated_at = now()
+  returning phone, job_title, company, birthday, website, note
+  ```
+
+  Solo cambia la columna elegida; las otras cinco conservan lo que tenga la fila en ese momento, así que guardados concurrentes de campos distintos no se pisan. Dos guardados del mismo campo dejan el último (lo esperado). El perfil devuelto sale del `returning` de esa misma sentencia.
 - AUTH-3: `modules/users/` con `types/`, `schemas/`, `services/users.service.ts` (`server-only`), `actions/users.actions.ts`, `components/UsersTable.tsx`, `components/InviteUserDialog.tsx`, `index.ts`. Tabla shadcn simple con filtro local; sin TanStack Table (YAGNI).
 - Antes de escribir código, el developer lee la guía de `proxy` en `node_modules/next/dist/docs/` y la de Clerk para Next.js.
 
@@ -540,10 +730,17 @@ Manuales (usuario, claves de desarrollo, sin escribir en Neon):
 - Del proyecto: `cn()` de `@/lib/utils`, `components/ui/button.tsx`, zod v4.
 - De shadcn: `sidebar`, `badge`, `sheet`, `tooltip`, `separator`, `skeleton` e `input` (AUTH-2); `avatar`, `dropdown-menu`, `switch`, `toggle-group`, `label` y `card` (AUTH-2.1); `table`, `dialog`, `alert-dialog` y `select` (AUTH-3).
 - AUTH-2.1: `requirePermission`, `ROLE_LABELS`, `visibleNavItems`, `APP_NAME`, `useIsMobile` y `AppSidebar` de AUTH-2; patrón nav-user del bloque sidebar de shadcn.
+- AUTH-2.2: `getActor`, `requirePermission`, `getDb` y el runner `db:migrate` de AUTH-1; `UserAvatar`, `SectionLabel`, `Card`, `Skeleton`, `dropdown-menu`, `input`, `label` y `button` ya instalados; zod v4. Solo se añade `dialog` (también lo usará AUTH-3).
 
 ## Archivos sensibles
 
-Fase AUTH-2.1: ninguno. Ninguna ruta permitida de CA-29 coincide con el patrón sensible del hook (`modules/account/*` no contiene `auth`, y no hay `db/`, `proxy.*`, `scripts/db-*` ni `lib/roles|db`).
+Fase AUTH-2.2 (coinciden con el patrón sensible del hook; se desbloquean solo con esta spec aprobada y mientras su plan tenga tareas abiertas):
+
+- `db/migrations/0002_user_profiles.sql`
+- `lib/auth.ts`
+- `lib/auth.test.ts`
+
+Fase AUTH-2.1 (cerrada): ninguno. Ninguna ruta permitida de CA-29 coincide con el patrón sensible del hook (`modules/account/*` no contiene `auth`, y no hay `db/`, `proxy.*`, `scripts/db-*` ni `lib/roles|db`).
 
 Fase AUTH-2 (cerrada): ninguno. Ningún archivo de AUTH-2 coincide con las rutas sensibles de `docs/SETUP.md` (comprobado contra el patrón del hook para las rutas permitidas de CA-22).
 
@@ -559,6 +756,7 @@ Ninguno.
 - `lib/auth.test.ts`: CA-5, con `@clerk/nextjs/server`, `next/navigation` y `@/lib/db` simulados con `vi.mock`.
 - AUTH-2: `lib/navigation.test.ts` (CA-12). Sin tests de `AppSidebar`, layout, página, `loading.tsx`, `error.tsx` ni `hooks/use-mobile.ts` (D16: sin lógica propia más allá de `matchMedia`): no tienen lógica propia más allá de `visibleNavItems` y `requirePermission` (ya probado en CA-5); los Server Components async no se pueden probar con Vitest.
 - AUTH-2.1: `modules/account/utils/uiPreferences.test.ts` (CA-26). Sin tests de componentes, páginas ni del script de tema: no tienen lógica propia más allá de `parseUiPreferences`.
+- AUTH-2.2: `profile.schema.test.ts` (CA-34), `profileFields.test.ts` (CA-35), `profile.service.test.ts` (CA-36) y los casos nuevos de `lib/auth.test.ts` (CA-37). Sin tests de `ProfileView`, `ProfileFieldDialog`, la página ni la acción: la acción solo encadena `getActor`, el esquema y el service, ya probados, y se revisa por lectura (CA-38).
 - AUTH-3: `modules/users/services/users.service.test.ts` (R4, R5, R6 con Clerk y base simulados); `users.schema` solo si tiene transformaciones (email en minúsculas).
 - Sin tests de páginas, layouts ni componentes `components/ui/`.
 
@@ -603,9 +801,31 @@ Ninguno.
   - Archivos: ninguno.
   - Depende de: T11.
 
+### Fase AUTH-2.2
+
+- [ ] T13 — Datos, validación y sincronización:
+  - `npm ci`.
+  - Migración `0002_user_profiles.sql` (sin ejecutarla).
+  - `profile.schema.ts`, `profile.types.ts`, `profileFields.ts`, `profile.service.ts`, `server.ts` y sus tests.
+  - `lib/auth.ts`: copia del nombre en la vinculación y `syncOwnIdentity`, con sus tests.
+  - CA-41 al terminar.
+  - Archivos: `db/migrations/0002_user_profiles.sql`, `lib/auth.ts`, `lib/auth.test.ts`, `modules/account/schemas/*`, `modules/account/types/profile.types.ts`, `modules/account/utils/profileFields*`, `modules/account/services/*`, `modules/account/server.ts`.
+  - Depende de: —. Secuencial (base).
+- [ ] T14 — Interfaz y acción:
+  - `npx shadcn@latest add dialog` sin `--overwrite`; CA-41 inmediatamente después.
+  - `profile.actions.ts`, `ProfileFieldDialog`, `ProfileView` reescrito, `index.ts` y la página.
+  - CA-41 al terminar.
+  - Archivos: `components/ui/dialog.tsx`, `modules/account/actions/profile.actions.ts`, `modules/account/components/ProfileView.tsx`, `modules/account/components/ProfileFieldDialog.tsx`, `modules/account/index.ts`, `app/dashboard/profile/page.tsx`.
+  - Depende de: T13. Secuencial.
+- [ ] T15 — Verificación:
+  - El reviewer comprueba CA-9, CA-10 y CA-34 a CA-41.
+  - El propietario ejecuta la migración (orden expresa suya) y CA-42 a CA-45.
+  - Archivos: ninguno (evidencia en `docs/evidence/auth-profile.md` solo con orden del usuario).
+  - Depende de: T14.
+
 ### Fase siguiente (sin casillas hasta reaprobar)
 
-- AUTH-3: `npx shadcn add table dialog alert-dialog select`; `modules/users/*` con test del service; `app/dashboard/users/page.tsx`; ítem "Usuarios" en `NAV_ITEMS` (D12); R12 en código (CA-19); propuestas P-AUTH3-1 a P-AUTH3-6; dependencia obligatoria P-POST-2.
+- AUTH-3: `npx shadcn add table alert-dialog select` (`dialog` llega en AUTH-2.2); `modules/users/*` con test del service; `app/dashboard/users/page.tsx`; ítem "Usuarios" en `NAV_ITEMS` (D12); R12 en código (CA-19); propuestas P-AUTH3-1 a P-AUTH3-6. P-POST-2 llega resuelta por AUTH-2.2 (D32).
 
 ## Preguntas abiertas
 
@@ -621,4 +841,10 @@ Cerradas por el usuario para AUTH-2.1:
 - B2, el 2026-11-08: Clerk sigue el tema con `color-scheme`, y en claro como respaldo (D21).
 - Tipografía y tema oscuro, el 2026-11-08: se adopta la spec visual tal cual (D20, D20b).
 
-Ninguna abierta. Lo pospuesto (P-POST-1 y P-POST-2) y las propuestas para AUTH-3 se deciden en su fase.
+Cerradas por el propietario para AUTH-2.2, el 2026-11-08:
+- O1: tipografía D20b sin cambios (D33).
+- O2: encabezado sin tarjeta, sin rol ni estado (D29).
+- O3: P-POST-2 se implementa en AUTH-2.2 (D32).
+- Dirección para AUTH-3 (A1 a A8): ver "Propuestas para AUTH-3".
+
+Ninguna abierta. La zona horaria y el formato de fecha editables siguen pospuestos (P-POST-1).

@@ -37,9 +37,11 @@ async function findActor(clerkUserId: string): Promise<Actor | null> {
     return null;
   }
 
+  // The same statement copies Clerk's name (D32).
   const [activated] = await sql`
     update app_users
-    set clerk_user_id = ${clerkUserId}, status = 'active', updated_at = now()
+    set clerk_user_id = ${clerkUserId}, status = 'active',
+      first_name = ${user.firstName ?? null}, last_name = ${user.lastName ?? null}, updated_at = now()
     where email = ${primary.emailAddress.toLowerCase()}
       and status = 'invited'
       and clerk_user_id is null
@@ -67,4 +69,60 @@ export async function requirePermission(permission: Permission): Promise<Actor> 
   }
 
   return actor;
+}
+
+// Logs code and message only: the error detail can contain personal data (e.g. the duplicated email).
+function logSyncError(step: string, error: unknown) {
+  const { code, message } = (error ?? {}) as { code?: unknown; message?: unknown };
+  console.error(`syncOwnIdentity: ${step} failed`, { code, message });
+}
+
+// D32, R35: copy name and verified primary email from Clerk to the actor's own app_users row.
+// Two independent statements, each a no-op if nothing changed; an email failure never undoes the
+// names. Only first_name, last_name, email and updated_at are written. Never throws.
+export async function syncOwnIdentity(actor: Actor): Promise<void> {
+  let user: Awaited<ReturnType<typeof currentUser>>;
+  try {
+    user = await currentUser();
+  } catch (error) {
+    logSyncError("currentUser", error);
+    return;
+  }
+
+  if (!user || user.id !== actor.clerkUserId) {
+    return;
+  }
+
+  const sql = getDb();
+  const firstName = user.firstName ?? null;
+  const lastName = user.lastName ?? null;
+
+  try {
+    await sql`
+      update app_users
+      set first_name = ${firstName}, last_name = ${lastName}, updated_at = now()
+      where id = ${actor.id}
+        and (first_name is distinct from ${firstName} or last_name is distinct from ${lastName})`;
+  } catch (error) {
+    logSyncError("names update", error);
+  }
+
+  const primary = user.primaryEmailAddress;
+  if (!primary || primary.verification?.status !== "verified") {
+    return;
+  }
+
+  const email = primary.emailAddress.toLowerCase();
+
+  // `not exists` covers the usual collision; a race that slips past it fails with 23505 and is logged.
+  try {
+    await sql`
+      update app_users
+      set email = ${email}, updated_at = now()
+      where id = ${actor.id}
+        and email is distinct from ${email}
+        and not exists (select 1 from app_users where email = ${email} and id <> ${actor.id})`;
+  } catch (error) {
+    logSyncError("email update", error);
+  }
 }

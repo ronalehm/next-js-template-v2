@@ -1,7 +1,10 @@
-import { requirePermission } from "@/lib/auth";
+import { requirePermission, syncOwnIdentity } from "@/lib/auth";
 import { ProfileView } from "@/modules/account";
+import { getOwnProfile } from "@/modules/account/server";
 
 export default async function ProfilePage() {
   const actor = await requirePermission("dashboard:view");
-  return <ProfileView role={actor.role} />;
+  await syncOwnIdentity(actor);
+  const profile = await getOwnProfile(actor.id);
+  return <ProfileView profile={profile} />;
 }
