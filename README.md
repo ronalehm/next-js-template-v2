@@ -24,6 +24,18 @@ npm install
 npm run dev        # http://localhost:3000
 ```
 
+### Instalación sin scripts (recomendada para esta plantilla)
+
+Para instalar exactamente el lockfile sin ejecutar los scripts de instalación de las dependencias:
+
+```sh
+npm ci --ignore-scripts
+```
+
+En esta plantilla basta: los binarios nativos (por ejemplo `@unrs/resolver-binding-*`, que usa ESLint) llegan como dependencias opcionales fijadas en el lockfile, y lint, tests y build pasan así (ver [`docs/evidence/template-v2-dependency-security.md`](docs/evidence/template-v2-dependency-security.md)). Es una recomendación, no una regla: los proyectos derivados pueden necesitar scripts de otras dependencias, y no se impone con `.npmrc`.
+
+El build necesita las `devDependencies` (por ejemplo `shadcn`, que aporta `shadcn/tailwind.css` al compilar). `npm ci` y Vercel las instalan por defecto.
+
 ## Comandos
 
 | Comando | Qué hace |
