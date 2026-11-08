@@ -1,0 +1,134 @@
+"use client";
+
+import { useId, useState, useTransition } from "react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { updateProfileFieldAction } from "../actions/profile.actions";
+import { profileFieldInputSchema } from "../schemas/profile.schema";
+import type { Profile, ProfileFieldKey } from "../types/profile.types";
+import { PROFILE_FIELD_LABELS } from "../utils/profileFields";
+
+const INPUT_TYPES: Partial<Record<ProfileFieldKey, string>> = { phone: "tel", birthday: "date", website: "url" };
+
+type FieldFormProps = {
+  field: ProfileFieldKey;
+  value: string | null;
+  onSaved: (profile: Profile) => void;
+  onCancel: () => void;
+};
+
+// Mounted on each open (the popup unmounts when closed), so the draft always starts from the saved value.
+function FieldForm({ field, value, onSaved, onCancel }: FieldFormProps) {
+  // Frozen at mount: the saved profile updates before the 100 ms close animation ends, which would flip the title and "Quitar".
+  const [initial] = useState(value);
+  const [draft, setDraft] = useState(value ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+  const inputId = useId();
+  const errorId = useId();
+  const label = PROFILE_FIELD_LABELS[field];
+
+  // Same validation as the server (R32); the server stays the authority. An empty value removes the field.
+  function save(next: string | null) {
+    const parsed = profileFieldInputSchema.safeParse({ field, value: next });
+
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Datos no válidos.");
+      return;
+    }
+
+    setError(null);
+    startTransition(async () => {
+      const result = await updateProfileFieldAction(parsed.data);
+
+      if (result.ok) {
+        onSaved(result.profile);
+      } else {
+        setError(result.error);
+      }
+    });
+  }
+
+  const fieldProps = {
+    id: inputId,
+    value: draft,
+    onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setDraft(event.target.value),
+    "aria-invalid": error ? true : undefined,
+    "aria-describedby": error ? errorId : undefined,
+  };
+
+  return (
+    <form
+      noValidate
+      className="grid gap-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        save(draft);
+      }}
+    >
+      <DialogHeader>
+        <DialogTitle className="text-base font-semibold">
+          {initial ? "Editar" : "Añadir"} {label.toLowerCase()}
+        </DialogTitle>
+      </DialogHeader>
+
+      <div className="grid gap-2">
+        <Label htmlFor={inputId}>{label}</Label>
+        {field === "note" ? (
+          <textarea
+            {...fieldProps}
+            rows={4}
+            className="w-full min-w-0 resize-none rounded-lg border border-input bg-transparent px-2.5 py-2 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30"
+          />
+        ) : (
+          <Input {...fieldProps} type={INPUT_TYPES[field] ?? "text"} />
+        )}
+        {error ? (
+          <p id={errorId} className="text-[13px] text-destructive">
+            {error}
+          </p>
+        ) : null}
+      </div>
+
+      <DialogFooter className="sm:justify-between">
+        {initial ? (
+          <Button type="button" variant="destructive" disabled={isPending} onClick={() => save(null)}>
+            Quitar
+          </Button>
+        ) : (
+          <span aria-hidden className="hidden sm:block" />
+        )}
+        <div className="flex flex-col-reverse gap-2 sm:flex-row">
+          <Button type="button" variant="outline" disabled={isPending} onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button type="submit" disabled={isPending}>
+            Guardar
+          </Button>
+        </div>
+      </DialogFooter>
+    </form>
+  );
+}
+
+// R31: one field per dialog. On error it stays open, keeps the draft and shows the message next to the field.
+export function ProfileFieldDialog({
+  open,
+  onOpenChange,
+  finalFocus,
+  ...formProps
+}: Omit<FieldFormProps, "onCancel"> & {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  finalFocus: () => HTMLElement | null;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent showCloseButton={false} finalFocus={finalFocus} className="sm:max-w-110">
+        <FieldForm {...formProps} onCancel={() => onOpenChange(false)} />
+      </DialogContent>
+    </Dialog>
+  );
+}
