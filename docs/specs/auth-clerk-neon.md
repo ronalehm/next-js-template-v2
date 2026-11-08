@@ -5,9 +5,10 @@
 - ID: SPEC-auth-clerk-neon
 - Riesgo: alto (autenticación, sesión, roles y permisos, esquema y migraciones, borrado de registros, dependencias críticas, integraciones externas)
 - Ruta: SDD-ADVANCED
-- Fase actual: AUTH-1
+- Fase actual: AUTH-2
 - Fases: AUTH-1, AUTH-2, AUTH-3. La aprobación autoriza solo la fase actual; pasar de fase exige editar esta spec y aprobarla de nuevo.
-- Base: `main` en `18e3dc6`. Rama `feat/auth-clerk-neon`, worktree `C:/Users/ronal/template-v2-auth`. La aprobación se firma en este worktree (la firma incluye la raíz).
+- Base AUTH-2: `main` en `0cfcd4a` (merge de AUTH-1, PR #4). Rama `feat/auth-dashboard`, worktree `C:/Users/ronal/template-v2-dashboard`. La aprobación de AUTH-2 se firma en este worktree (la firma incluye la raíz); la firma y la línea del registro de AUTH-1 no autorizan AUTH-2.
+- Historial: AUTH-1 cerrada (base `18e3dc6`, rama `feat/auth-clerk-neon`, worktree `C:/Users/ronal/template-v2-auth`, aprobada el 2026-11-08T01:25:08Z, integrada en `main` por `0cfcd4a`). Evidencia: `docs/evidence/auth-clerk-neon.md`.
 - Fuente: `origin/backup/template-v2-wip-2026-11-06` (`b21d514`), portada archivo por archivo con `git show`. Nunca merge, cherry-pick ni checkout de la rama.
 - Antecedente: `docs/specs/template-v2-professional-workflow.md`, "Después de validar Fase B", punto 1. Decisiones heredadas: portar desde la rama de respaldo y rol en `app_users`.
 
@@ -19,8 +20,15 @@ Dar a la plantilla autenticación con Clerk, persistencia en PostgreSQL (Neon), 
 
 Incluye:
 - AUTH-1: dependencias, variables de entorno, `proxy.ts`, `ClerkProvider`, páginas de sign-in y sign-up, cliente Neon, migración `app_users` con runner versionado, script de alta del primer superadmin, roles, permisos y resolución del usuario actual.
-- AUTH-2: shell del panel (`/dashboard`) con sidebar reutilizable cuyos ítems declaran el permiso que requieren.
+- AUTH-2: shell del panel (`/dashboard`) con sidebar reutilizable cuyos ítems declaran el permiso que requieren, cabecera con `UserButton`, página de inicio del panel y estados de carga, error y acceso denegado (R13 a R18).
 - AUTH-3: módulo `users`: listar, invitar, cambiar rol, revocar acceso (baja lógica) y reenviar invitaciones.
+
+No incluye en AUTH-2 (queda para AUTH-3 o fuera de alcance):
+- Módulo `modules/users/`, ruta `/dashboard/users`, ítem "Usuarios" del sidebar (D12), server actions, `UsersError` y llamadas a la API de invitaciones de Clerk.
+- Componentes shadcn de AUTH-3 (`table`, `dialog`, `alert-dialog`, `dropdown-menu`, `select`, `label`) y cualquier componente fuera de la lista cerrada de CA-22. `input` entra solo porque `sidebar` lo instala como dependencia.
+- Código de R12 (cambiar rol o revocar), reactivación de filas `revoked` y cualquier `update` sobre `app_users`.
+- Cambios en archivos de AUTH-1: `proxy.ts`, `lib/auth.ts`, `lib/auth.test.ts`, `lib/db.ts`, `lib/roles.ts`, `lib/roles.test.ts`, `db/`, `scripts/`, `app/layout.tsx`, `app/page.tsx`, `app/sign-in/`, `app/sign-up/`, `.env.example`, `.gitignore`.
+- Nuevas migraciones, nuevas dependencias npm, configuración de Clerk, datos de Neon, `next.config.ts`.
 
 No incluye:
 - Cambios en gobierno (`.claude/`, `CLAUDE.md`, `AGENTS.md`, `docs/SETUP.md`), en la spec de Fase B ni en Fase C.
@@ -49,6 +57,17 @@ Decisiones del usuario (2026-11-07):
 - **D9. `user` accede a `/dashboard`** con permisos básicos (`dashboard:view`), sin administración de usuarios ni módulos no autorizados. AUTH-1 define el permiso y protege la ruta; el dashboard se construye en AUTH-2, no en AUTH-1.
 - **D10. Baja lógica.** Revocar pone `status = 'revoked'`; no se borran filas y se conserva el historial. El acceso se deniega en la siguiente petición (D11). `revoked` es el único estado de baja, también para invitaciones revocadas; no existe `disabled`. Ninguna operación reactiva automáticamente una fila `revoked`: ni el sign-in, ni una invitación nueva, ni `db-grant-superadmin`.
 - **D11. Fuentes únicas.** Clerk es el proveedor de identidad. Neon (`app_users`) es la única fuente de roles, permisos y estado. Cada comprobación de autorización consulta rol y estado en `app_users` en esa petición, en el servidor. `publicMetadata.role` ni ningún claim o cookie se usan para autorizar.
+
+Decisiones del usuario para AUTH-2 (adoptadas el 2026-11-07; cierran P1 y P2):
+
+- **D12. "Usuarios" llega con AUTH-3.** El ítem "Usuarios" (`users:manage`) se añade a `NAV_ITEMS` junto con su ruta en AUTH-3; en AUTH-2 no existe `/dashboard/users` y un enlace a ella sería un 404. El filtro por permiso se prueba en AUTH-2 con ítems de prueba (CA-12). Sustituye la redacción anterior de CA-11.
+- **D13. Acceso denegado = home.** `requirePermission` ya redirige a `/` y la home ya muestra "Tu cuenta no tiene acceso". AUTH-2 no crea página `/forbidden` ni activa `authInterrupts` (exigiría tocar `next.config.ts`).
+- **D14. Filtro de navegación solo en la UI.** El sidebar oculta lo que el rol no puede usar, pero no autoriza: cada layout y página de `/dashboard` llama a `requirePermission` en el servidor (R1). `AppSidebar` recibe el `role` y filtra en el cliente porque los iconos de `lucide-react` no se pueden pasar de un Server Component a un Client Component.
+- **D15. Sin cambios en AUTH-1.** AUTH-2 solo añade las rutas permitidas de CA-22; usa `requirePermission`, `Actor`, `ROLE_LABELS`, `can` y `Permission` tal como están.
+
+Decisión del usuario para AUTH-2 (2026-11-07):
+
+- **D16. `hooks/use-mobile.ts` editado a mano.** El archivo que genera shadcn incumple `react-hooks/set-state-in-effect` (`setIsMobile` dentro de `useEffect`) y hace fallar `npm run lint` (CA-10). Es el único archivo generado que se edita a mano: `useIsMobile` se reescribe con `React.useSyncExternalStore` sobre `window.matchMedia("(max-width: 767px)")` (suscripción al evento `change`, snapshot del cliente `matchMedia(...).matches`, snapshot del servidor `false`). Misma firma pública (`useIsMobile(): boolean`) y mismo breakpoint (768). Sin `eslint-disable` y sin tocar `eslint.config.mjs`.
 
 ## Inventario de la rama de respaldo
 
@@ -104,7 +123,13 @@ Decisiones del usuario (2026-11-07):
 9. R9 — Sin marca de MADRE ni de otro cliente en el código. El nombre visible del panel es una constante de la plantilla.
 10. R10 — Ninguna clave real en el repositorio; `.env.example` solo con marcadores.
 11. R11 — Sin reactivación automática (D10). Invitar un email cuya fila está `revoked` falla con un mensaje claro. `db-grant-superadmin` sobre una fila `revoked` falla con código 1 sin modificarla.
-12. R12 — Último superadmin: ninguna sentencia que cambie rol o estado puede dejar cero filas `superadmin` con `status = 'active'`. Además de D4, cada `update` de rol o estado lleva la condición en la misma sentencia (`... and not (role = 'superadmin' and (select count(*) from app_users where role = 'superadmin' and status = 'active') <= 1)`); cero filas afectadas se informa como error. En AUTH-1 ningún código revoca ni degrada: solo `invited → active` y la promoción del script.
+12. R12 — Último superadmin: ninguna sentencia que cambie rol o estado puede dejar cero filas `superadmin` con `status = 'active'`. Además de D4, la condición se exige solo en los `update` que pueden sacar una fila del conjunto de superadmins activos (cambiar el rol de una fila `superadmin` o pasar una fila `superadmin` `active` a otro estado), dentro de la misma sentencia (`... and not (role = 'superadmin' and status = 'active' and (select count(*) from app_users where role = 'superadmin' and status = 'active') <= 1)`); cero filas afectadas se informa como error. No se exige en las sentencias que solo añaden superadmins activos o no tocan ese conjunto: la vinculación `invited → active` (R2) y la promoción de `db-grant-superadmin`. AUTH-1 y AUTH-2 no tienen sentencias que revoquen ni degraden; R12 se implementa y prueba en AUTH-3 (CA-19).
+13. R13 — `/dashboard` (AUTH-2): `app/dashboard/layout.tsx` y `app/dashboard/page.tsx` llaman cada uno a `requirePermission("dashboard:view")` en el servidor antes de renderizar. Sin sesión → `/sign-in` (proxy y `requirePermission`). Sesión sin fila `active` (sin fila, `invited` no vinculable o `revoked`) → `/`, que muestra el aviso de acceso denegado (D13). No se renderiza nada del shell sin actor.
+14. R14 — Navegación: `lib/navigation.ts` define `APP_NAME`, `NAV_ITEMS` y `visibleNavItems(role, items = NAV_ITEMS)`, que devuelve, en el mismo orden, los ítems sin `permission` o con `can(role, permission)`. En AUTH-2, `NAV_ITEMS` contiene solo "Inicio" (`/dashboard`, sin permiso adicional al del layout).
+15. R15 — Shell: sidebar con la marca genérica (`APP_NAME`), los ítems visibles, el ítem activo según la ruta y el rol del actor (`ROLE_LABELS`) en el pie; cabecera con `SidebarTrigger`, `APP_NAME` y `UserButton`. En móvil el sidebar se abre como panel lateral (comportamiento de shadcn `sidebar`). La página `/dashboard` saluda y muestra el rol; sin datos de negocio.
+16. R16 — Carga: `app/dashboard/loading.tsx` muestra un indicador accesible (`role="status"` con texto) mientras carga la página.
+17. R17 — Error: `app/error.tsx` (Client Component) captura los errores de `/dashboard`, incluido su layout (un `error.tsx` no cubre el layout de su mismo segmento), y de `/`. Muestra un mensaje genérico y un botón para reintentar según la guía de `error.js` de Next 16; nunca muestra `error.message` ni la pila. No captura las redirecciones de `requirePermission`.
+18. R18 — Sin dependencias npm nuevas ni cambios de configuración: `npx shadcn@latest add sidebar badge`, sin `--overwrite`, solo crea los ocho archivos generados que lista CA-22. Si pide sobrescribir un archivo existente, se responde que no. Si crea, modifica o borra cualquier otra ruta (incluidos `package.json`, `package-lock.json`, `components.json`, `tsconfig.json` y `app/globals.css`), el developer se detiene y lo informa antes de seguir (CA-22).
 
 ## Contratos
 
@@ -126,6 +151,14 @@ Tabla `app_users` (`db/migrations/0001_app_users.sql`):
 - `getActor(): Promise<Actor | null>` (R2).
 - `requirePermission(permission): Promise<Actor>` — sin sesión: `redirect("/sign-in")`; sin permiso o sin fila: `redirect("/")`.
 
+`lib/navigation.ts` (AUTH-2, sin `server-only`: lo usa el sidebar en el cliente):
+- `APP_NAME: string` — nombre visible genérico del panel (R9).
+- `type NavItem = { title: string; href: string; icon: LucideIcon; permission?: Permission }`.
+- `NAV_ITEMS: readonly NavItem[]` — en AUTH-2 solo `{ title: "Inicio", href: "/dashboard", icon: LayoutDashboard }`.
+- `visibleNavItems(role: Role, items: readonly NavItem[] = NAV_ITEMS): NavItem[]` (R14).
+
+`components/shared/AppSidebar.tsx` (AUTH-2, `"use client"`): `AppSidebar({ role }: { role: Role })`.
+
 Server actions (AUTH-3, `modules/users/actions/users.actions.ts`), todas `(input: unknown) => Promise<ActionResult>` con `ActionResult = { ok: true } | { ok: false; error: string }`:
 - `inviteUserAction({ email, role })`, `updateUserRoleAction({ id, role })`, `revokeUserAction({ id })`, `resendInvitationAction({ id })`.
 
@@ -142,12 +175,15 @@ Scripts:
 - Consultas SQL siempre parametrizadas.
 - Configuración de Clerk a cargo del usuario (no código): modo de registro "Restricted".
 - El agente no lee, imprime ni edita `.env*` salvo `.env.example`, y no ejecuta `db:migrate` ni `db:grant-superadmin` sin orden expresa del usuario en el chat. Ninguna aprobación de esta spec autoriza migrar producción.
+- AUTH-2 no escribe en Neon ni cambia Clerk: su única lectura de datos es la de `requirePermission`. El filtro del sidebar no es un control de acceso (D14).
+- `app/error.tsx` no expone mensajes internos (mismo criterio que E8).
 
 ## Recuperación
 
-- Código: todo vive en `feat/auth-clerk-neon` sin commits del agente. Descartar = borrar la rama y el worktree; `main` y `C:/Users/ronal/template-v2-pro` (con sus cambios locales) no se tocan.
+- AUTH-1: integrada en `main` por el merge `0cfcd4a` (PR #4, commit `13b9cd7` de `feat/auth-clerk-neon`). Deshacerla en `main` exige revertir ese merge (`git revert -m 1 0cfcd4a`) con una orden expresa del usuario. AUTH-2 no la toca.
 - Base de datos (solo rama de desarrollo de Neon, con orden expresa): `drop table app_users; delete from schema_migrations where name = '0001_app_users.sql';`. Alternativa sin pérdida: restaurar la rama de Neon a un punto anterior.
 - Clerk: instancia de desarrollo; los usuarios de prueba se borran desde su dashboard.
+- AUTH-2: parte de `0cfcd4a` y todo vive en `feat/auth-dashboard`, sin commits del agente. Descartar = `git worktree remove C:/Users/ronal/template-v2-dashboard` y `git branch -D feat/auth-dashboard` desde `C:/Users/ronal/template-v2-pro`. Sin cambios en Neon ni en Clerk que deshacer.
 
 ## Criterios de aceptación
 
@@ -163,13 +199,45 @@ Scripts:
 - [ ] CA-8 — Dado `npm run db:grant-superadmin -- <email>`, una invitación de Clerk a ese email y su sign-in con email verificado, cuando carga `/`, entonces la fila queda `active` con su `clerk_user_id` y la página muestra el rol "Superadmin".
 - [ ] CA-8b — Dada una cuenta de Clerk sin fila en `app_users`, cuando carga `/`, entonces la página indica que no tiene acceso (comprobado por el usuario). Con la instancia en modo Restricted, `/sign-up` sin invitación no permite registrarse.
 - [ ] CA-8c — Dada una fila `revoked`, cuando se ejecuta `db:grant-superadmin` con su email, entonces sale con código 1 y la fila no cambia (comprobado por el usuario en la base de desarrollo).
-- [ ] CA-9 — Ninguna cadena "MADRE" ni "Centro Psicológico" en archivos nuevos o modificados (`git grep`).
+- [ ] CA-9 — Ninguna cadena "MADRE" ni "Centro Psicológico" en el código nuevo o modificado de la fase. Se excluye `docs/`, que cita estas cadenas al describir el respaldo (E10). Verificación, con `<base>` = base de la fase (`18e3dc6` en AUTH-1, `0cfcd4a` en AUTH-2) incluyendo archivos sin seguimiento y sin tocar el índice: `{ git diff --name-only <base> -- . ':(exclude)docs'; git ls-files -o --exclude-standard -- . ':(exclude)docs'; } | sort -u | xargs -r grep -s -n -E "MADRE|Centro Psicológico" --` sin salida. Aplica a cada fase.
 - [ ] CA-10 — `npx vitest run`, `npm run lint` y `npm run build` sin errores; `npx vitest run .claude/hooks` sigue pasando.
 
-### AUTH-2 (detalle al reaprobar)
+### AUTH-2
 
-- [ ] CA-11 — Un usuario con rol `user` entra a `/dashboard` y no ve el ítem "Usuarios"; un `admin` lo ve.
-- [ ] CA-12 — `AppSidebar` recibe ítems con `permission` opcional; la función de filtrado tiene tests.
+Automáticos (Reviewer):
+
+- [ ] CA-12 — Tests de `lib/navigation.ts` con ítems de prueba: un ítem sin `permission` es visible para los tres roles; uno con `users:manage` se oculta a `user` y se muestra a `admin` y `superadmin`; se conserva el orden; `NAV_ITEMS` no contiene `/dashboard/users` (D12).
+- [ ] CA-20 — `app/dashboard/layout.tsx` y `app/dashboard/page.tsx` llaman a `requirePermission("dashboard:view")` antes de renderizar (R13); `AppSidebar` no decide acceso, solo filtra (D14). Verificación: lectura del código.
+- [ ] CA-21 — `app/dashboard/loading.tsx` tiene `role="status"` y texto; `app/error.tsx` es Client Component, no renderiza `error.message` ni la pila y ofrece reintentar (R16, R17). Verificación: lectura del código.
+- [ ] CA-22 — Alcance cerrado de archivos (D15, R18). Todo cambio respecto a `0cfcd4a` (modificado, añadido, eliminado, renombrado o nuevo sin seguimiento) debe estar en esta lista de rutas permitidas. Cualquier otra ruta es FAIL y detiene la implementación. Esto incluye sobrescribir un archivo existente (por ejemplo `components/ui/button.tsx`) y cualquier cambio en `components.json`, `tsconfig.json`, `package.json`, `package-lock.json`, `app/globals.css`, `next.config.ts`, `eslint.config.mjs`, `vitest.config.mts`, `AGENTS.md`, `CLAUDE.md`, `.claude/`, `.gitignore`, `.env.example` o los archivos de AUTH-1. Estar dentro de `components/ui/` o `hooks/` no autoriza nada: solo valen las rutas listadas.
+
+  Rutas permitidas en AUTH-2. Ninguna de código existe en `0cfcd4a`, así que todas deben aparecer como nuevas:
+  - T6, generadas por `npx shadcn@latest add sidebar badge` sin `--overwrite` y sin ediciones manuales (registro `base-nova`, consultado el 2026-11-07: `sidebar` depende de `button`, `input`, `separator`, `sheet`, `skeleton`, `tooltip` y `use-mobile`; ninguno añade dependencias npm, `cssVars` ni `css`): `components/ui/sidebar.tsx`, `components/ui/badge.tsx`, `components/ui/input.tsx`, `components/ui/separator.tsx`, `components/ui/sheet.tsx`, `components/ui/skeleton.tsx`, `components/ui/tooltip.tsx`.
+  - T6, generada por shadcn (mismo comando) y después editada a mano según D16: `hooks/use-mobile.ts`.
+  - T6, escritas a mano: `lib/navigation.ts`, `lib/navigation.test.ts`.
+  - T7: `components/shared/AppSidebar.tsx`, `app/dashboard/layout.tsx`, `app/dashboard/page.tsx`, `app/dashboard/loading.tsx`, `app/error.tsx`.
+  - Flujo SDD, no código: `docs/specs/auth-clerk-neon.md` (esta spec, el `Estado` que cambia el hook y las casillas de T6 a T8), `docs/specs/auth-clerk-neon.md.sig` (firma del usuario), `docs/specs/approvals.jsonl` (línea que añade el hook) y `docs/evidence/auth-dashboard.md` (solo con orden del usuario).
+
+  Verificación en Git Bash, desde la raíz del worktree. PASS = sin salida; cada línea impresa es una ruta fuera de alcance:
+
+  ```sh
+  { git diff --name-only --no-renames 0cfcd4a; git ls-files -o --exclude-standard; } | sort -u | grep -v -x -F \
+    -e components/ui/sidebar.tsx -e components/ui/badge.tsx -e components/ui/input.tsx -e components/ui/separator.tsx \
+    -e components/ui/sheet.tsx -e components/ui/skeleton.tsx -e components/ui/tooltip.tsx -e hooks/use-mobile.ts \
+    -e lib/navigation.ts -e lib/navigation.test.ts -e components/shared/AppSidebar.tsx \
+    -e app/dashboard/layout.tsx -e app/dashboard/page.tsx -e app/dashboard/loading.tsx -e app/error.tsx \
+    -e docs/specs/auth-clerk-neon.md -e docs/specs/auth-clerk-neon.md.sig -e docs/specs/approvals.jsonl \
+    -e docs/evidence/auth-dashboard.md
+  ```
+
+  `git diff --name-only --no-renames 0cfcd4a` compara el árbol de trabajo (cambios preparados y sin preparar) con la base y lista modificados, añadidos y eliminados, con las dos rutas de cada renombrado. `git ls-files -o --exclude-standard` añade los archivos nuevos sin seguimiento. `node_modules/`, `.next/`, `next-env.d.ts` y `*.tsbuildinfo` quedan fuera porque `.gitignore` los ignora. Se ejecuta al terminar T6, al terminar T7 y en T8. Si el registro de shadcn genera otra ruta, el resultado es FAIL: la lista solo se amplía editando esta spec y aprobándola de nuevo.
+- [ ] CA-9 y CA-10 sobre AUTH-2 (base `0cfcd4a`).
+
+Manuales (usuario, claves de desarrollo, sin escribir en Neon ni en Clerk):
+
+- [ ] CA-11 — Dado un actor `user` activo, cuando entra a `/dashboard`, entonces ve el shell: sidebar con "Inicio" activo y su rol "Usuario" en el pie, cabecera con el nombre del panel y `UserButton`, y ningún ítem "Usuarios". Dado un `superadmin` (o `admin`) activo, ve el mismo shell con su rol. En móvil el sidebar se abre con el botón de la cabecera.
+- [ ] CA-23 — Dado un usuario sin sesión, cuando visita `/dashboard`, entonces llega a `/sign-in`.
+- [ ] CA-24 — Dada una cuenta de Clerk sin fila `active` (la de CA-8b, o la fila `revoked` de CA-8c si tiene cuenta), cuando visita `/dashboard`, entonces llega a `/` con el aviso "Tu cuenta no tiene acceso" y no ve nada del shell.
 
 ### AUTH-3 (detalle al reaprobar)
 
@@ -187,6 +255,11 @@ Scripts:
 - `proxy.ts`: `clerkMiddleware` con `createRouteMatcher(["/dashboard(.*)"])` y `auth.protect()`; matcher del respaldo.
 - `app/layout.tsx`: envolver `body` con `ClerkProvider`; `lang="es"`; metadata genérica.
 - AUTH-2: `components/shared/AppSidebar.tsx` (cliente) con `NavItem = { title; href; icon; permission? }`; `lib/navigation.ts` con `APP_NAME`, `NAV_ITEMS` y `visibleNavItems(role)`.
+- AUTH-2, `app/dashboard/layout.tsx` (Server Component): `const actor = await requirePermission("dashboard:view")`; `SidebarProvider` > `AppSidebar role={actor.role}` + `SidebarInset` con cabecera (`SidebarTrigger`, `Separator`, `APP_NAME`, `UserButton` a la derecha) y `children`. Basado en `app/(dashboard)/layout.tsx` del respaldo sin marca y sin `requireUserManager`.
+- AUTH-2, `app/dashboard/page.tsx` (Server Component): `requirePermission("dashboard:view")`, título "Inicio" y texto con `ROLE_LABELS[actor.role]`. Layout y página consultan `app_users` por separado (dos lecturas por petición); se acepta para no tocar `lib/auth.ts` (D15).
+- AUTH-2, `AppSidebar`: `usePathname()` para el ítem activo; `SidebarMenuButton` con `render={<Link href />}` (Base UI, como el respaldo); `Badge` con el rol en el pie. Sin estado propio.
+- AUTH-2, `app/dashboard/loading.tsx` y `app/error.tsx`: los mínimos de R16 y R17. El developer lee antes `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/error.md` y `loading.md` (Next 16 cambió las props de `error.js`).
+- AUTH-2 empieza con `npm ci` en el worktree nuevo (no tiene `node_modules`).
 - AUTH-3: `modules/users/` con `types/`, `schemas/`, `services/users.service.ts` (`server-only`), `actions/users.actions.ts`, `components/UsersTable.tsx`, `components/InviteUserDialog.tsx`, `index.ts`. Tabla shadcn simple con filtro local; sin TanStack Table (YAGNI).
 - Antes de escribir código, el developer lee la guía de `proxy` en `node_modules/next/dist/docs/` y la de Clerk para Next.js.
 
@@ -198,17 +271,9 @@ Scripts:
 
 ## Archivos sensibles
 
-Fase AUTH-1:
+Fase AUTH-2: ninguno. Ningún archivo de AUTH-2 coincide con las rutas sensibles de `docs/SETUP.md` (comprobado contra el patrón del hook para las rutas permitidas de CA-22).
 
-- `proxy.ts`
-- `lib/auth.ts`
-- `lib/auth.test.ts`
-- `lib/db.ts`
-- `lib/roles.ts`
-- `lib/roles.test.ts`
-- `db/migrations/0001_app_users.sql`
-- `scripts/db-migrate.mjs`
-- `scripts/db-grant-superadmin.mjs`
+Fase AUTH-1 (cerrada). Se citan en línea y sin viñetas para que el hook no las desbloquee mientras el plan de AUTH-2 esté abierto: `proxy.ts`, `lib/auth.ts`, `lib/auth.test.ts`, `lib/db.ts`, `lib/roles.ts`, `lib/roles.test.ts`, `db/migrations/0001_app_users.sql`, `scripts/db-migrate.mjs`, `scripts/db-grant-superadmin.mjs`.
 
 ## Cambios de gobierno
 
@@ -218,7 +283,7 @@ Ninguno.
 
 - `lib/roles.test.ts`: CA-4.
 - `lib/auth.test.ts`: CA-5, con `@clerk/nextjs/server`, `next/navigation` y `@/lib/db` simulados con `vi.mock`.
-- AUTH-2: `lib/navigation.test.ts` (filtro por permiso).
+- AUTH-2: `lib/navigation.test.ts` (CA-12). Sin tests de `AppSidebar`, layout, página, `loading.tsx`, `error.tsx` ni `hooks/use-mobile.ts` (D16: sin lógica propia más allá de `matchMedia`): no tienen lógica propia más allá de `visibleNavItems` y `requirePermission` (ya probado en CA-5); los Server Components async no se pueden probar con Vitest.
 - AUTH-3: `modules/users/services/users.service.test.ts` (R4, R5, R6 con Clerk y base simulados); `users.schema` solo si tiene transformaciones (email en minúsculas).
 - Sin tests de páginas, layouts ni componentes `components/ui/`.
 
@@ -232,11 +297,23 @@ Ninguno.
 - [x] T4 — UI mínima: `ClerkProvider` en layout, páginas de sign-in/sign-up, home pública con rol · archivos: `app/layout.tsx`, `app/page.tsx`, `app/sign-in/[[...sign-in]]/page.tsx`, `app/sign-up/[[...sign-up]]/page.tsx` · depende de: T3 · secuencial
 - [x] T5 — Verificación: reviewer con CA-1 a CA-5, CA-9 y CA-10; el usuario ejecuta CA-6, CA-7, CA-8, CA-8b y CA-8c con claves de desarrollo, Clerk en modo Restricted y orden expresa para migrar · archivos: ninguno · depende de: T4 · secuencial
 
-### Fases siguientes (sin casillas hasta reaprobar)
+### Fase AUTH-2
 
-- AUTH-2: `npx shadcn add sidebar badge`; `lib/navigation.ts` y test; `components/shared/AppSidebar.tsx`; `app/dashboard/layout.tsx` y `page.tsx`. Archivos sensibles: ninguno nuevo.
-- AUTH-3: `npx shadcn add table dialog alert-dialog dropdown-menu select input label`; `modules/users/*` con test del service; `app/dashboard/users/page.tsx`.
+- [x] T6 — Base y navegación: `npm ci`; `npx shadcn@latest add sidebar badge` sin `--overwrite` (R18); comprobación CA-22 inmediatamente después, y si falla se detiene; reescritura de `hooks/use-mobile.ts` según D16; `lib/navigation.ts` y su test; CA-22 de nuevo al terminar · archivos: `components/ui/sidebar.tsx`, `components/ui/badge.tsx`, `components/ui/input.tsx`, `components/ui/separator.tsx`, `components/ui/sheet.tsx`, `components/ui/skeleton.tsx`, `components/ui/tooltip.tsx`, `hooks/use-mobile.ts`, `lib/navigation.ts`, `lib/navigation.test.ts` · depende de: — · secuencial (base)
+- [x] T7 — Shell y estados: `components/shared/AppSidebar.tsx`, `app/dashboard/layout.tsx`, `app/dashboard/page.tsx`, `app/dashboard/loading.tsx`, `app/error.tsx`; CA-22 al terminar · archivos: esos cinco · depende de: T6 · secuencial
+- [x] T8 — Verificación: reviewer con CA-9, CA-10, CA-12, CA-20, CA-21 y CA-22; el usuario ejecuta CA-11, CA-23 y CA-24 con claves de desarrollo · archivos: ninguno (evidencia en `docs/evidence/auth-dashboard.md` solo con orden del usuario) · depende de: T7 · secuencial
+
+### Fase siguiente (sin casillas hasta reaprobar)
+
+- AUTH-3: `npx shadcn add table dialog alert-dialog dropdown-menu select input label`; `modules/users/*` con test del service; `app/dashboard/users/page.tsx`; ítem "Usuarios" en `NAV_ITEMS` (D12); R12 en código (CA-19).
 
 ## Preguntas abiertas
 
-Ninguna. Cerradas por el usuario el 2026-11-07 (D8 a D11).
+Cerradas por el usuario el 2026-11-07: D8 a D11.
+
+Cerradas por el usuario el 2026-11-07 para AUTH-2:
+
+- P1 — Enlace "Ir al panel" en la home: **no**. `app/page.tsx` (AUTH-1) no se modifica; se entra al panel por URL.
+- P2 — Ítem "Usuarios": **no** hasta AUTH-3 (D12).
+
+Ninguna abierta.
