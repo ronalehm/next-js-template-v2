@@ -25,7 +25,7 @@ export async function updateProfileFieldAction(input: unknown): Promise<ProfileA
       return { ok: false, error: issue?.message ?? "Datos no válidos." };
     }
 
-    const profile = await setOwnProfileField(actor.id, parsed.data.field, parsed.data.value);
+    const profile = await setOwnProfileField(actor.id, parsed.data);
     return { ok: true, profile };
   } catch (error) {
     // Code and message only, never the submitted value (private data, D31).
