@@ -122,7 +122,7 @@ function DetailBody({ row, lastSignInAt, imageUrl }: { row: UserRow; lastSignInA
         <InfoRow label="Rol">{ROLE_LABELS[row.role]}</InfoRow>
       </Group>
       <p className="-mt-4 text-xs text-muted-foreground">
-        Por seguridad, solo {row.firstName || name} puede cambiar su nombre, su correo o su contraseña desde su perfil.
+        Por seguridad, solo {row.firstName || name} puede cambiar su correo o su contraseña desde su perfil.
       </p>
 
       <Group title="Actividad">
@@ -142,16 +142,16 @@ export function UserDetailSheet({
   onOpenChange,
   row,
   activity,
-  canChangeRole,
-  onChangeRole,
+  canEdit,
+  onEdit,
   finalFocus,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   row: UserRow | null;
   activity: ClerkActivity[string] | undefined;
-  canChangeRole: boolean;
-  onChangeRole: () => void;
+  canEdit: boolean;
+  onEdit: () => void;
   finalFocus: () => HTMLElement | null;
 }) {
   return (
@@ -174,7 +174,7 @@ export function UserDetailSheet({
 
         <SheetFooter className="flex-row justify-end border-t px-5 py-3">
           <SheetClose render={<Button variant="secondary" />}>Cerrar</SheetClose>
-          {canChangeRole ? <Button onClick={onChangeRole}>Cambiar rol</Button> : null}
+          {canEdit ? <Button onClick={onEdit}>Editar</Button> : null}
         </SheetFooter>
       </SheetContent>
     </Sheet>

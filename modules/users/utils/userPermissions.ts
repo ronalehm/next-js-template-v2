@@ -10,11 +10,12 @@ export function assignableRoles(actorRole: Role): Role[] {
 export function rowActions(
   actor: { id: string; role: Role },
   row: Pick<UserRow, "id" | "role" | "status" | "linked">,
-): { changeRole: boolean; revoke: boolean; activate: boolean; resend: boolean } {
+): { edit: boolean; revoke: boolean; activate: boolean; resend: boolean } {
   const manages = actor.id !== row.id && canManageRole(actor.role, row.role);
 
   return {
-    changeRole: manages && actor.role === "superadmin" && row.status !== "revoked",
+    // Active linked rows: name and role. Invited rows (superadmin only): role only (RN-08).
+    edit: manages && ((row.status === "active" && row.linked) || (row.status === "invited" && actor.role === "superadmin")),
     revoke: manages && row.status !== "revoked",
     activate: manages && row.status === "revoked" && row.linked,
     resend: manages && row.status === "invited",

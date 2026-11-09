@@ -8,7 +8,7 @@ const ACTOR_ID = "actor";
 const actions = (actorRole: Role, role: Role, status: UserStatus, linked = status !== "invited", id = "row") =>
   rowActions({ id: ACTOR_ID, role: actorRole }, { id, role, status, linked });
 
-const NONE = { changeRole: false, revoke: false, activate: false, resend: false };
+const NONE = { edit: false, revoke: false, activate: false, resend: false };
 
 describe("assignableRoles", () => {
   it.each([
@@ -28,11 +28,11 @@ describe("rowActions (D37)", () => {
   });
 
   describe("admin", () => {
-    it("revokes an active user row but does not change its role", () => {
-      expect(actions("admin", "user", "active")).toEqual({ ...NONE, revoke: true });
+    it("edits and revokes an active user row", () => {
+      expect(actions("admin", "user", "active")).toEqual({ ...NONE, edit: true, revoke: true });
     });
 
-    it("revokes and resends an invited user row", () => {
+    it("revokes and resends an invited user row but does not edit it", () => {
       expect(actions("admin", "user", "invited")).toEqual({ ...NONE, revoke: true, resend: true });
     });
 
@@ -48,15 +48,15 @@ describe("rowActions (D37)", () => {
   });
 
   describe("superadmin", () => {
-    it.each(["user", "admin"] as const)("changes role and revokes an active %s row", (role) => {
-      expect(actions("superadmin", role, "active")).toEqual({ ...NONE, changeRole: true, revoke: true });
+    it.each(["user", "admin"] as const)("edits and revokes an active %s row", (role) => {
+      expect(actions("superadmin", role, "active")).toEqual({ ...NONE, edit: true, revoke: true });
     });
 
-    it.each(["user", "admin"] as const)("changes role, revokes and resends an invited %s row", (role) => {
-      expect(actions("superadmin", role, "invited")).toEqual({ changeRole: true, revoke: true, activate: false, resend: true });
+    it.each(["user", "admin"] as const)("edits (role only), revokes and resends an invited %s row", (role) => {
+      expect(actions("superadmin", role, "invited")).toEqual({ ...NONE, edit: true, revoke: true, resend: true });
     });
 
-    it.each(["user", "admin"] as const)("only activates a revoked linked %s row (no role change)", (role) => {
+    it.each(["user", "admin"] as const)("only activates a revoked linked %s row", (role) => {
       expect(actions("superadmin", role, "revoked", true)).toEqual({ ...NONE, activate: true });
     });
 
@@ -76,6 +76,15 @@ describe("rowActions (D37)", () => {
   it("never offers Activar for a revoked row that was never linked", () => {
     expect(actions("superadmin", "user", "revoked", false)).toEqual(NONE);
     expect(actions("admin", "user", "revoked", false)).toEqual(NONE);
+  });
+
+  it("offers Editar only for active linked rows, plus invited rows for superadmin", () => {
+    expect(actions("superadmin", "user", "active", true).edit).toBe(true);
+    expect(actions("superadmin", "user", "active", false).edit).toBe(false);
+    expect(actions("superadmin", "user", "invited").edit).toBe(true);
+    expect(actions("admin", "user", "invited").edit).toBe(false);
+    expect(actions("admin", "user", "revoked", true).edit).toBe(false);
+    expect(actions("superadmin", "user", "revoked", true).edit).toBe(false);
   });
 
   it("offers Reenviar only for invited rows", () => {

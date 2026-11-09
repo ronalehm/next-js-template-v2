@@ -40,3 +40,27 @@ export const roleInputSchema = z.strictObject({
 export const idInputSchema = z.strictObject({
   id: z.uuid(),
 });
+
+// USERS-1: no silent truncation; over 50 is rejected (D-U1-6).
+const nameField = z
+  .string()
+  .refine((v) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(v), "Quita los caracteres no válidos.")
+  .transform((v) => v.replace(/\s+/g, " ").trim())
+  .pipe(z.string().min(1, "Este campo es obligatorio.").max(50, "Máximo 50 caracteres."));
+
+export const nameInputSchema = z.strictObject({
+  id: z.uuid(),
+  firstName: nameField,
+  lastName: nameField,
+  expectedFirstName: z.string().max(256).nullable(), // value of the row the UI saw
+  expectedLastName: z.string().max(256).nullable(),
+});
+
+// USERS-1b: full mode (active row) or role-only mode (invited row). Strict: no name keys in role-only.
+const roleFields = {
+  role: z.enum(PANEL_ROLES, "Elige un rol válido."),
+  expectedRole: z.enum(ROLES), // role of the row the UI saw
+};
+const editFullSchema = z.strictObject({ ...nameInputSchema.shape, ...roleFields });
+const editRoleOnlySchema = z.strictObject({ id: z.uuid(), ...roleFields });
+export const editUserInputSchema = z.union([editFullSchema, editRoleOnlySchema]);
