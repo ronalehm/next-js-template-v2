@@ -20,6 +20,7 @@ import {
   type PhoneType,
 } from "../utils/phone";
 import { PROFILE_FIELD_LABELS } from "../utils/profileFields";
+import { CustomFieldForm, type CustomDialogProps } from "./CustomFieldForm";
 
 const INPUT_TYPES: Partial<Record<ProfileFieldKey, string>> = { birthday: "date", website: "url" };
 
@@ -183,16 +184,21 @@ export function ProfileFieldDialog({
   open,
   onOpenChange,
   finalFocus,
+  custom,
   ...formProps
 }: Omit<FieldFormProps, "onCancel"> & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   finalFocus: () => HTMLElement | null;
+  // When present, the dialog edits a custom field instead of a fixed one.
+  custom?: CustomDialogProps;
 }) {
+  const onCancel = () => onOpenChange(false);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent showCloseButton={false} finalFocus={finalFocus} className="sm:max-w-110">
-        <FieldForm {...formProps} onCancel={() => onOpenChange(false)} />
+        {custom ? <CustomFieldForm {...custom} onCancel={onCancel} /> : <FieldForm {...formProps} onCancel={onCancel} />}
       </DialogContent>
     </Dialog>
   );

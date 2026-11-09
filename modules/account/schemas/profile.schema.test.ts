@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { profileFieldInputSchema } from "./profile.schema";
+import {
+  addCustomFieldInputSchema,
+  customLabelKey,
+  deleteCustomFieldInputSchema,
+  moveCustomFieldInputSchema,
+  profileFieldInputSchema,
+  RESERVED_LABELS,
+  updateCustomFieldInputSchema,
+} from "./profile.schema";
 
 const parse = (input: unknown) => profileFieldInputSchema.safeParse(input);
 
@@ -145,5 +153,87 @@ describe("profileFieldInputSchema: website without scheme (R4)", () => {
     const result = parse({ field: "website", value: `example.com/${"a".repeat(181)}` });
     expect(result.success).toBe(false);
     expect(result.error?.issues[0].message).toBe("Máximo 200 caracteres.");
+  });
+});
+
+describe("custom field schemas", () => {
+  const add = (input: unknown) => addCustomFieldInputSchema.safeParse(input);
+  const label = (value: string) => add({ label: value, value: "x" });
+  const value = (v: string) => add({ label: "Ubicación", value: v });
+  const id = "123e4567-e89b-42d3-a456-426614174000";
+
+  it("normalizes the label: trim, collapsed spaces and NFC", () => {
+    expect(label("  Mi   dato   extra ").data?.label).toBe("Mi dato extra");
+    expect(label("Ubicación").data?.label).toBe("Ubicación");
+  });
+
+  it("accepts Ubicación and 40 characters; rejects empty and 41", () => {
+    expect(label("Ubicación").success).toBe(true);
+    expect(label("a".repeat(40)).success).toBe(true);
+    expect(label("   ").error?.issues[0].message).toBe("Escribe una etiqueta.");
+    expect(label("a".repeat(41)).error?.issues[0].message).toBe("Máximo 40 caracteres.");
+  });
+
+  it.each(["teléfono", "CARGO", "Sitio Web", "Correo", "Nombre", "Apellido", "NOTA PERSONAL", "Cumpleanos", " empresa "])(
+    "rejects reserved label %s",
+    (name) => {
+      expect(label(name).error?.issues[0].message).toBe("Esa etiqueta ya existe en tu perfil. Usa otra.");
+    },
+  );
+
+  it("reserves every fixed label", () => {
+    for (const name of RESERVED_LABELS) expect(label(name).success).toBe(false);
+  });
+
+  it("does not treat Ubicación and ubicacion as duplicates of each other by key", () => {
+    expect(customLabelKey("Ubicación")).toBe(customLabelKey("UBICACIÓN"));
+    expect(customLabelKey("Ubicación")).not.toBe(customLabelKey("Ubicacion"));
+  });
+
+  it.each(["a\nb", "a\rb", "a\tb", "a\u2028b", "a\u2029b", "a\u0000b"])("rejects control or line separator in label %j", (name) => {
+    expect(label(name).error?.issues[0].message).toBe("La etiqueta debe ser de una sola línea.");
+  });
+
+  it("trims the value and accepts 200 characters", () => {
+    expect(value("  hola ").data?.value).toBe("hola");
+    expect(value("a".repeat(200)).success).toBe(true);
+  });
+
+  it.each([
+    ["201 characters", "a".repeat(201), "Máximo 200 caracteres."],
+    ["empty", "", "Escribe un valor."],
+    ["blank", "   ", "Escribe un valor."],
+    ["a trailing newline", "a\n", "El valor debe ser de una sola línea."],
+    ["a carriage return", "a\rb", "El valor debe ser de una sola línea."],
+    ["a line separator", "a\u2028b", "El valor debe ser de una sola línea."],
+    ["a paragraph separator", "a\u2029b", "El valor debe ser de una sola línea."],
+  ])("rejects a value with %s", (_name, v, message) => {
+    expect(value(v).error?.issues[0].message).toBe(message);
+  });
+
+  it("update rejects an empty value and a non-uuid id", () => {
+    expect(updateCustomFieldInputSchema.safeParse({ id, label: "Ubicación", value: "" }).error?.issues[0].message).toBe(
+      "Escribe un valor.",
+    );
+    expect(updateCustomFieldInputSchema.safeParse({ id: "nope", label: "Ubicación", value: "x" }).success).toBe(false);
+    expect(updateCustomFieldInputSchema.safeParse({ id, label: "  Ubicación ", value: " x " }).data).toEqual({
+      id,
+      label: "Ubicación",
+      value: "x",
+    });
+  });
+
+  it("validates delete and move input", () => {
+    expect(deleteCustomFieldInputSchema.safeParse({ id }).success).toBe(true);
+    expect(deleteCustomFieldInputSchema.safeParse({ id: "nope" }).success).toBe(false);
+    expect(moveCustomFieldInputSchema.safeParse({ id, direction: "up" }).success).toBe(true);
+    expect(moveCustomFieldInputSchema.safeParse({ id, direction: "left" }).success).toBe(false);
+  });
+
+  it("rejects extra keys such as userId in all four schemas", () => {
+    expect(add({ label: "Ubicación", value: "x", userId: "other" }).success).toBe(false);
+    expect(updateCustomFieldInputSchema.safeParse({ id, label: "Ubicación", value: "x", userId: "o" }).success).toBe(false);
+    expect(deleteCustomFieldInputSchema.safeParse({ id, userId: "o" }).success).toBe(false);
+    expect(moveCustomFieldInputSchema.safeParse({ id, direction: "up", userId: "o" }).success).toBe(false);
   });
 });

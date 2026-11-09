@@ -1,10 +1,10 @@
 import { requirePermission, syncOwnIdentity } from "@/lib/auth";
 import { ProfileView } from "@/modules/account";
-import { getOwnProfile } from "@/modules/account/server";
+import { getOwnCustomFields, getOwnProfile } from "@/modules/account/server";
 
 export default async function ProfilePage() {
   const actor = await requirePermission("dashboard:view");
   await syncOwnIdentity(actor);
-  const profile = await getOwnProfile(actor.id);
-  return <ProfileView profile={profile} />;
+  const [profile, customFields] = await Promise.all([getOwnProfile(actor.id), getOwnCustomFields(actor.id)]);
+  return <ProfileView profile={profile} customFields={customFields} />;
 }

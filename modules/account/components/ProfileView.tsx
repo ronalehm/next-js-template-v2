@@ -7,10 +7,17 @@ import { UserAvatar } from "@/components/shared/UserAvatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import type { Profile, ProfileFieldKey } from "../types/profile.types";
+import { MAX_CUSTOM_FIELDS } from "../schemas/profile.schema";
+import type { CustomField, Profile, ProfileFieldKey } from "../types/profile.types";
 import { formatPhone, PHONE_TYPE_LABELS } from "../utils/phone";
 import { formatProfileValue, OPTIONAL_PROFILE_FIELDS, PROFILE_FIELD_LABELS } from "../utils/profileFields";
 import { SectionLabel } from "./AccountSummary";
@@ -82,10 +89,19 @@ function FieldValue({ field, value }: { field: ProfileFieldKey; value: string })
 
 // Ver perfil (screens 08 and 19, D29). Identity comes from Clerk and is edited only in its modal (D24);
 // phone and optional fields come from the server as `profile` and are edited here (R30, R31).
-export function ProfileView({ profile: initialProfile }: { profile: Profile }) {
+export function ProfileView({
+  profile: initialProfile,
+  customFields: initialCustomFields = [],
+}: {
+  profile: Profile;
+  customFields?: CustomField[];
+}) {
   const { isLoaded, user } = useUser();
   const { openUserProfile } = useClerk();
   const [profile, setProfile] = useState(initialProfile);
+  const [customFields, setCustomFields] = useState(initialCustomFields);
+  const [customMode, setCustomMode] = useState(false);
+  const [customId, setCustomId] = useState<string | null>(null);
   const [field, setField] = useState<ProfileFieldKey>("phone");
   const [dialogOpen, setDialogOpen] = useState(false);
   const opener = useRef<HTMLElement | null>(null);
@@ -98,9 +114,18 @@ export function ProfileView({ profile: initialProfile }: { profile: Profile }) {
   const openClerk = () => openUserProfile();
   const edit = (key: ProfileFieldKey, from: HTMLElement | null) => {
     opener.current = from;
+    setCustomMode(false);
     setField(key);
     setDialogOpen(true);
   };
+  // id null = new custom field.
+  const editCustom = (id: string | null, from: HTMLElement | null) => {
+    opener.current = from;
+    setCustomMode(true);
+    setCustomId(id);
+    setDialogOpen(true);
+  };
+  const hasCustomRoom = customFields.length < MAX_CUSTOM_FIELDS;
 
   const name = user.fullName || user.primaryEmailAddress?.emailAddress || "Usuario";
   const primaryEmail = user.primaryEmailAddress;
@@ -150,7 +175,10 @@ export function ProfileView({ profile: initialProfile }: { profile: Profile }) {
             onOpen={(from) => edit(key, from)}
           />
         ))}
-        {missingOptional.length > 0 ? (
+        {customFields.map((item) => (
+          <Row key={item.id} label={item.label} value={item.value} onOpen={(from) => editCustom(item.id, from)} />
+        ))}
+        {missingOptional.length > 0 || hasCustomRoom ? (
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={addInfoTrigger}
@@ -164,6 +192,14 @@ export function ProfileView({ profile: initialProfile }: { profile: Profile }) {
                   {PROFILE_FIELD_LABELS[key]}
                 </DropdownMenuItem>
               ))}
+              {hasCustomRoom ? (
+                <>
+                  {missingOptional.length > 0 ? <DropdownMenuSeparator /> : null}
+                  <DropdownMenuItem onClick={() => editCustom(null, addInfoTrigger.current)}>
+                    Campo personalizado…
+                  </DropdownMenuItem>
+                </>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
@@ -195,6 +231,19 @@ export function ProfileView({ profile: initialProfile }: { profile: Profile }) {
           setProfile(saved);
           setDialogOpen(false);
         }}
+        custom={
+          customMode
+            ? {
+                fields: customFields,
+                id: customId,
+                onChange: setCustomFields,
+                onSaved: (saved) => {
+                  setCustomFields(saved);
+                  setDialogOpen(false);
+                },
+              }
+            : undefined
+        }
       />
     </div>
   );
