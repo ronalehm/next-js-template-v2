@@ -24,10 +24,10 @@ SIGUIENTE: ...
 
 READ-ONLY lo respondes tú, sin subagentes. Si dudas entre dos rutas, recomienda una y pregunta.
 
-## 2. Ruta BUILD
+## 2. Ruta BUILD (ODD-LIGHT)
 
 1. Invoca a `developer` en modo build con la tarea descrita de forma completa: qué cambiar, criterio de "terminado" y archivos esperados.
-2. Invoca a `reviewer` en modo build con la misma descripción (valida contra la tarea y `docs/SETUP.md`).
+2. Invoca a `reviewer` en modo build con la misma descripción (valida contra la tarea y `docs/SETUP.md`). El reviewer hace la única verificación integral; el developer solo ejecuta pruebas focalizadas.
 3. Bucle de corrección (sección 5). Al terminar, resume al usuario.
 
 Si durante el trabajo resulta más grande de lo previsto, detente y reclasifica a SDD.
@@ -46,7 +46,16 @@ Si durante el trabajo resulta más grande de lo previsto, detente y reclasifica 
    - La aprobación no autoriza archivos de gobierno. Si la spec lista `## Cambios de gobierno`, pide además **"autorizo gobierno docs/specs/<slug>.md"** y muestra esas rutas antes de que responda.
 4. **Implementación** según el plan (sección 4).
 5. **Revisión** de la spec completa con `reviewer` + bucle de corrección (sección 5).
-6. **Cierre.** Marca las tareas hechas (`- [x]`) en el plan. Si quedan fases, informa qué queda y detente: la siguiente fase es otra sesión. Entrega un resumen: qué se hizo, archivos tocados, tests y resultado de la revisión.
+6. **Cierre.** Marca las tareas hechas (`- [x]`) en el plan. Si quedan fases, informa qué queda y detente: la siguiente fase es otra sesión. Entrega el cierre en 10 líneas como máximo:
+
+   ```text
+   FASE / RUTA / ESTADO: ... | COMPLETADO | PARCIAL | BLOQUEADO
+   CAMBIOS: rutas
+   VERIFICACIÓN: <comando> → PASS | FAIL | NO EJECUTADO (motivo)
+   REVISIÓN: veredicto y número de ciclos
+   PENDIENTES / RIESGOS: ...
+   SIGUIENTE GATE: ...
+   ```
 
 ## 4. Ejecución en paralelo
 
@@ -67,8 +76,8 @@ Si un developer reporta que necesita tocar un archivo fuera de su lista, no lo a
 
 ## Reglas
 
-- Cada agente no ve esta conversación: pásale todo el contexto que necesita (modo, ruta de la spec, tarea, archivos asignados).
-- Al invocar a `developer`, el prompt debe incluir **siempre** la ruta de la spec y `Fase: <fase actual>` en SDD, o la línea literal `Modo: build` en BUILD. Un hook (`.claude/hooks/spec-approval.mjs`) bloquea la invocación si la spec no existe, no tiene una aprobación registrada, cambió después de aprobarse, la fase no coincide o no se indica nada. `Modo: build` no autoriza rutas sensibles ni de gobierno: el hook bloquea la escritura. Si te bloquea, no intentes rodearlo: pide la aprobación al usuario.
+- Cada agente no ve esta conversación: pásale un brief mínimo con estos 7 campos: modo; ruta de la spec y `Fase: <fase>` o `Modo: build`; tarea y AC; archivos propios; archivos vetados; pruebas exigidas; prohibiciones. Pasa la ruta de la spec, no su contenido.
+- Al invocar a `developer`, el prompt debe incluir **siempre** la ruta de la spec y `Fase: <fase actual>` en SDD, o la línea literal `Modo: build` en BUILD. Un hook (`.claude/hooks/spec-approval.mjs`) bloquea la invocación si la spec no existe, no tiene una aprobación registrada, cambió después de aprobarse, la fase no coincide o no se indica nada. `Modo: build` no autoriza rutas sensibles ni de gobierno: el hook bloquea la escritura. Si te bloquea, no intentes rodearlo: pide la aprobación al usuario. Si `guard`, `gate`, `relay` o un permiso bloquean a un subagente, cierra la fase como BLOQUEADO; solo el usuario decide cómo seguir. Ningún agente intenta otra vía.
 - Tu única edición permitida en specs son las casillas del plan de tareas (marcarlas no invalida la aprobación). Nunca edites `docs/specs/approvals.jsonl`.
 - Si `spec` modifica una spec ya aprobada, vuelve a `Estado: borrador` y requiere nueva aprobación humana antes de seguir implementando.
 - Nadie hace commits: el commit lo decide el usuario.
