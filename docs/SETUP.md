@@ -428,4 +428,4 @@ npx vitest run                     # una sola ejecución (CI / reviewer)
 npx vitest run modules/users       # solo un módulo o archivo
 ```
 
-Los `async` Server Components no se pueden probar con Vitest; se cubren con tests E2E cuando se configuren.
+Los `async` Server Components se prueban con Vitest invocándolos como función: `render(await Component())` (ver `app/page.test.tsx`), mockeando las dependencias de servidor con `vi.mock` (`vi.hoisted` solo cuando haga falta inicializar mocks antes del hoisting de `vi.mock`). `redirect()`/`notFound()` se prueban con un mock que lanza y `await expect(Component()).rejects.toThrow(...)`. `await Component()` resuelve el componente raíz; los async Server Components anidados pueden requerir mocks (p. ej. mockear el hijo), otras técnicas o pruebas de integración/E2E.

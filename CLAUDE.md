@@ -17,7 +17,7 @@ npx vitest run path/to/file.test.ts  # single test file, one run
 npx shadcn@latest add <component>   # add shadcn/ui components into components/ui/
 ```
 
-Vitest runs in jsdom with Testing Library; `@/` alias resolved natively via `resolve.tsconfigPaths` (no vite-tsconfig-paths, no @vitejs/plugin-react — its latest version requires Babel 8 and conflicts with shadcn's Babel 7). Async Server Components can't be unit tested.
+Vitest runs in jsdom with Testing Library; `@/` alias resolved natively via `resolve.tsconfigPaths` (no vite-tsconfig-paths, no @vitejs/plugin-react — its latest version requires Babel 8 and conflicts with shadcn's Babel 7). Async Server Components are unit tested by invoking them as a function and awaiting the result (`render(await Component())`; see `app/page.test.tsx`), mocking server-only dependencies with `vi.mock`. `await Component()` resolves the root component; nested async Server Components may need mocks (e.g. mock the child), other techniques or integration/E2E tests.
 
 ## Project rules: `docs/SETUP.md`
 
