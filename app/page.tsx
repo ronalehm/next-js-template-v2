@@ -1,12 +1,15 @@
 import { SignInButton, UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { getActor } from "@/lib/auth";
-import { ROLE_LABELS } from "@/lib/roles";
+import { can, ROLE_LABELS } from "@/lib/roles";
 
 export default async function Home() {
   const { userId } = await auth();
   const actor = userId ? await getActor() : null;
+
+  if (actor && can(actor.role, "dashboard:view")) redirect("/dashboard");
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
