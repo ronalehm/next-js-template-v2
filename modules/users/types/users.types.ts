@@ -1,0 +1,39 @@
+import type { z } from "zod";
+import type { Role } from "@/lib/roles";
+import type {
+  idInputSchema,
+  inviteInputSchema,
+  roleInputSchema,
+  SORT_KEYS,
+  USER_STATUSES,
+  usersQuerySchema,
+} from "../schemas/users.schema";
+
+export type UserStatus = (typeof USER_STATUSES)[number];
+export type SortKey = (typeof SORT_KEYS)[number];
+export type UsersQuery = z.output<typeof usersQuerySchema>;
+
+export type InviteInput = z.output<typeof inviteInputSchema>;
+export type RoleInput = z.output<typeof roleInputSchema>;
+export type IdInput = z.output<typeof idInputSchema>;
+
+// Never carries a Clerk id (D38).
+export type UserRow = {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  role: Role;
+  status: UserStatus;
+  linked: boolean;
+  createdAt: string;
+};
+
+export type UsersPage = { rows: UserRow[]; total: number; page: number; pageCount: number };
+
+// Keyed by the app_users row id.
+export type ClerkActivity = Record<string, { lastSignInAt: number | null; imageUrl: string | null }>;
+
+export type ActionResult = { ok: true } | { ok: false; error: string };
+
+export type SessionsResult = { ok: true; activeSessions: number | null } | { ok: false; error: string };
