@@ -5,125 +5,242 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-heading: var(--font-sans);
-    --font-sans: var(--font-sans);
-    --color-sidebar-ring: var(--sidebar-ring);
-    --color-sidebar-border: var(--sidebar-border);
-    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-    --color-sidebar-accent: var(--sidebar-accent);
-    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-    --color-sidebar-primary: var(--sidebar-primary);
-    --color-sidebar-foreground: var(--sidebar-foreground);
-    --color-sidebar: var(--sidebar);
-    --color-chart-5: var(--chart-5);
-    --color-chart-4: var(--chart-4);
-    --color-chart-3: var(--chart-3);
-    --color-chart-2: var(--chart-2);
-    --color-chart-1: var(--chart-1);
-    --color-ring: var(--ring);
-    --color-input: var(--input);
-    --color-border: var(--border);
-    --color-destructive: var(--destructive);
-    --color-accent-foreground: var(--accent-foreground);
-    --color-accent: var(--accent);
-    --color-muted-foreground: var(--muted-foreground);
-    --color-muted: var(--muted);
-    --color-secondary-foreground: var(--secondary-foreground);
-    --color-secondary: var(--secondary);
-    --color-primary-foreground: var(--primary-foreground);
-    --color-primary: var(--primary);
-    --color-popover-foreground: var(--popover-foreground);
-    --color-popover: var(--popover);
-    --color-card-foreground: var(--card-foreground);
-    --color-card: var(--card);
-    --color-foreground: var(--foreground);
-    --color-background: var(--background);
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+  /* D20b: Apple system font by name (SF Pro is not served as a webfont), Inter as fallback. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", var(--font-inter), system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --color-placeholder: var(--placeholder);
+  --color-primary-soft: var(--primary-soft);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-switch-off: var(--switch-off);
+  --color-segment-active: var(--segment-active);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  /* Visual spec, "Sombras y materiales". */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.05), 0 4px 16px rgb(0 0 0 / 0.05);
+  --shadow-control: 0 1px 1px rgb(0 0 0 / 0.08), 0 0 0 0.5px rgb(0 0 0 / 0.1);
+  --shadow-popover: 0 10px 30px rgb(0 0 0 / 0.16), 0 0 0 0.5px rgb(0 0 0 / 0.12);
+  --shadow-sheet: 0 24px 60px rgb(0 0 0 / 0.22), 0 0 0 0.5px rgb(0 0 0 / 0.1);
 }
 
+/* Light theme: values from docs/specs/users-management-design.md ("Tokens de color (modo claro)"). */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #1d1d1f;
+  --card: #ffffff;
+  --card-foreground: #1d1d1f;
+  --popover: #ffffff;
+  --popover-foreground: #1d1d1f;
+  --primary: #007aff;
+  --primary-foreground: #ffffff;
+  --secondary: rgb(120 120 128 / 0.12);
+  --secondary-foreground: #1d1d1f;
+  --muted: #f5f5f7;
+  --muted-foreground: #6e6e73;
+  --accent: rgb(0 0 0 / 0.04);
+  --accent-foreground: #1d1d1f;
+  --destructive: #ff3b30;
+  --border: rgb(60 60 67 / 0.16);
+  --input: rgb(60 60 67 / 0.16);
+  --ring: #007aff;
+  --radius: 0.75rem;
+  --sidebar: rgb(232 232 237 / 0.6);
+  --sidebar-foreground: #1d1d1f;
+  --sidebar-primary: #007aff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgb(0 0 0 / 0.07);
+  --sidebar-accent-foreground: #1d1d1f;
+  --sidebar-border: rgb(60 60 67 / 0.16);
+  --sidebar-ring: #007aff;
+  --placeholder: #a1a1a6;
+  --primary-soft: rgb(0 122 255 / 0.12);
+  --destructive-soft: rgb(255 59 48 / 0.12);
+  --success: #248a3d;
+  --success-soft: rgb(52 199 89 / 0.16);
+  --warning: #b25000;
+  --warning-soft: rgb(255 149 0 / 0.16);
+  --switch-off: #e5e5ea;
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --segment-active: var(--card);
 }
 
+/* Dark theme: values from docs/specs/users-management-design.md ("Tokens de color (modo oscuro)"). */
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+  color-scheme: dark;
+  --background: #1c1c1e;
+  --foreground: #f5f5f7;
+  --card: #1c1c1e;
+  --card-foreground: #f5f5f7;
+  --popover: #1c1c1e;
+  --popover-foreground: #f5f5f7;
+  --primary: #0a84ff;
+  --primary-foreground: #ffffff;
+  --secondary: rgb(118 118 128 / 0.24);
+  --secondary-foreground: #f5f5f7;
+  --muted: #121214;
+  --muted-foreground: #98989d;
+  --accent: rgb(255 255 255 / 0.05);
+  --accent-foreground: #f5f5f7;
+  --destructive: #ff453a;
+  --border: rgb(84 84 88 / 0.65);
+  --input: rgb(84 84 88 / 0.65);
+  --ring: #0a84ff;
+  --sidebar: rgb(44 44 46 / 0.6);
+  --sidebar-foreground: #f5f5f7;
+  --sidebar-primary: #0a84ff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgb(255 255 255 / 0.10);
+  --sidebar-accent-foreground: #f5f5f7;
+  --sidebar-border: rgb(84 84 88 / 0.65);
+  --sidebar-ring: #0a84ff;
+  --placeholder: #636366;
+  --primary-soft: rgb(10 132 255 / 0.20);
+  --destructive-soft: rgb(255 69 58 / 0.20);
+  --success: #30d158;
+  --success-soft: rgb(48 209 88 / 0.20);
+  --warning: #ff9f0a;
+  --warning-soft: rgb(255 159 10 / 0.20);
+  --switch-off: #39393d;
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --segment-active: #636366;
+}
+
+/* Translucent sidebar layer (visual spec, "Sombras y materiales"). */
+[data-slot="sidebar-inner"] {
+  backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* Sidebar without blur when the user asks for less transparency. */
+@media (prefers-reduced-transparency: reduce) {
+  [data-slot="sidebar-inner"] {
+    backdrop-filter: none;
+  }
+  :root {
+    --sidebar: #f1f1f4;
+  }
+  .dark {
+    --sidebar: #2c2c2e;
+  }
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
+  }
   body {
     @apply bg-background text-foreground;
-    }
+    /* D27: theme change fades in 200 ms. */
+    transition:
+      background-color 200ms ease,
+      color 200ms ease;
+  }
   html {
-    @apply font-sans;
-    }
+    @apply font-sans antialiased;
+    font-optical-sizing: auto;
+  }
+}
+
+@layer components {
+  /* Brand mark and avatar fallbacks: identical in both themes (visual spec). */
+  .brand-gradient {
+    background-image: linear-gradient(135deg, #3d9bff, #0060df);
+  }
+  .avatar-gradient-0 { background-image: linear-gradient(135deg, #5ac8fa, #007aff); }
+  .avatar-gradient-1 { background-image: linear-gradient(135deg, #ff9f0a, #ff375f); }
+  .avatar-gradient-2 { background-image: linear-gradient(135deg, #30d158, #0a84ff); }
+  .avatar-gradient-3 { background-image: linear-gradient(135deg, #bf5af2, #5e5ce6); }
+  .avatar-gradient-4 { background-image: linear-gradient(135deg, #ffd60a, #ff9f0a); }
+  .avatar-gradient-5 { background-image: linear-gradient(135deg, #64d2ff, #30b0c7); }
+
+  /* Theme previews in Configuración: fixed colors so each one shows its own theme (visual spec). */
+  .theme-preview {
+    background-repeat: no-repeat;
+    background-size: 30% 100%, 100% 100%;
+    background-position: left, center;
+  }
+  .theme-preview-light {
+    background-image: linear-gradient(#e8e8ed, #e8e8ed), linear-gradient(#f5f5f7, #f5f5f7);
+  }
+  .theme-preview-dark {
+    background-image: linear-gradient(#2c2c2e, #2c2c2e), linear-gradient(#121214, #121214);
+  }
+  .theme-preview-system {
+    background-image:
+      linear-gradient(#e8e8ed, #e8e8ed),
+      linear-gradient(135deg, #f5f5f7 0 50%, #121214 50% 100%);
+  }
+}
+
+/* D25 and D27: compact density and reduced motion, set by UiPreferencesRoot on <html> while the panel is open. */
+[data-density="compact"] [data-slot="sidebar-menu-button"] {
+  height: 1.75rem;
+}
+[data-density="compact"] [data-slot="dashboard-content"] {
+  padding: 1.5rem 1.75rem;
+  gap: 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-property: opacity !important;
+    transition-duration: 150ms !important;
+  }
+}
+[data-reduce-motion="true"] *,
+[data-reduce-motion="true"] *::before,
+[data-reduce-motion="true"] *::after {
+  animation-duration: 1ms !important;
+  transition-property: opacity !important;
+  transition-duration: 150ms !important;
 }
