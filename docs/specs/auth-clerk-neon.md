@@ -5,13 +5,15 @@
 - ID: SPEC-auth-clerk-neon
 - Riesgo: alto (autenticación, sesión, roles y permisos, esquema y migraciones, borrado de registros, dependencias críticas, integraciones externas)
 - Ruta: SDD-ADVANCED
-- Fase actual: AUTH-2.2
+- Fase actual: AUTH-3
 - Fases: AUTH-1, AUTH-2, AUTH-2.1, AUTH-2.2, AUTH-3. La aprobación autoriza solo la fase actual; pasar de fase exige editar esta spec y aprobarla de nuevo.
-- Base AUTH-2.2: `main` en `18a2414` (merge del PR #8, AUTH-2.1). Rama `feat/auth-profile`, worktree `C:/Users/ronal/template-v2-profile`. La aprobación de AUTH-2.2 se firma en este worktree (la firma incluye la raíz); la firma y las líneas del registro de fases anteriores no autorizan AUTH-2.2.
+- Base AUTH-3: `main` en `6885cc1` (merge del PR #10, CONTACT-1). Rama `feat/auth-users`, worktree `C:/Users/ronal/template-v2-users`. La aprobación de AUTH-3 se firma en este worktree (la firma incluye la raíz); la firma y las líneas del registro de fases anteriores no autorizan AUTH-3.
 - Historial:
   - AUTH-1 cerrada: base `18e3dc6`, rama `feat/auth-clerk-neon`, integrada en `main` por `0cfcd4a`. Evidencia: `docs/evidence/auth-clerk-neon.md`.
   - AUTH-2 cerrada: base `0cfcd4a`, rama `feat/auth-dashboard`, aprobada con el hash `51681ff2…cdb4`, integrada en `main` por `fc97323` (PR #5). Evidencia: `docs/evidence/auth-dashboard.md`.
   - AUTH-2.1 cerrada: base `a8494b6`, rama `feat/auth-dashboard-design`, aprobada con el hash `f28d7605…a756ae2`, integrada en `main` por `18a2414` (PR #8). Evidencia: `docs/evidence/auth-dashboard-design.md`.
+  - AUTH-2.2 cerrada: base `18a2414`, rama `feat/auth-profile`, aprobada con el hash `0a9ec4e8…3da8c`, integrada en `main` por `ca27a9b` (PR #9). Evidencia: `docs/evidence/auth-profile.md`.
+  - CONTACT-1 (spec propia `docs/specs/account-profile-contact.md`, no es fase de esta SDD): enmienda R31, R32 y CA-34 de AUTH-2.2 (teléfono internacional con tipo, sitio web sin esquema, solo correos secundarios verificados) y añade la migración `0003_user_profiles_phone_type.sql`. Integrada en `main` por `6885cc1` (PR #10). AUTH-3 no la toca.
 - Referencias visuales: `docs/specs/users-management-design.md` (spec visual) y Figma `ihJfCObzth2fgdsWId9HBK` (19 pantallas), con la jerarquía de D17.
 - Fuente: `origin/backup/template-v2-wip-2026-11-06` (`b21d514`), portada archivo por archivo con `git show`. Nunca merge, cherry-pick ni checkout de la rama.
 - Antecedente: `docs/specs/template-v2-professional-workflow.md`, "Después de validar Fase B", punto 1. Decisiones heredadas: portar desde la rama de respaldo y rol en `app_users`.
@@ -37,7 +39,22 @@ Incluye:
   - Teléfono y campos opcionales (Cargo, Empresa, Cumpleaños, Sitio web, Nota personal) en la tabla nueva `user_profiles`, privados y editables solo por su dueño (D30, D31).
   - Sincronización de nombre, apellido y correo principal de Clerk a `app_users` sin webhooks (D32). Resuelve P-POST-2 antes de AUTH-3.
   - Migración `0002_user_profiles.sql`, que ejecuta el propietario (R34).
-- AUTH-3: módulo `users`: listar, invitar, cambiar rol, revocar acceso (baja lógica) y reenviar invitaciones.
+- AUTH-3: gestión de usuarios en `/dashboard/users` (pantallas 01, 03, 04, 05 reducida, 07, 11, 12, 14, 15 y 16), con la matriz de D37. Incluye:
+  - Lista desde `app_users` con búsqueda, filtros de estado y rol, orden y paginación de 8 (D35).
+  - Detalle en panel lateral, con "Último acceso" y "Sesiones activas" leídos de Clerk solo para mostrarlos (D38).
+  - Invitar, cambiar rol entre `user` y `admin` (solo superadmin), inactivar (baja lógica), activar solo a quien ya se vinculó y reenviar invitaciones (D36, D37, D40).
+  - Ítem "Usuarios" en el sidebar (D12) y vista "sin acceso" dentro del shell para `user` (D39).
+  - Sin migraciones, sin dependencias npm y sin archivos sensibles.
+
+No incluye en AUTH-3:
+- Editar nombre, apellido, correo, foto o contraseña de otra persona (D24, D34). La pantalla 05 solo cambia el rol.
+- Borrado físico, en Neon o en Clerk, y la acción "Borrar" (pantalla 06) (D10, E7b).
+- Asignar, cambiar, inactivar o activar el rol `superadmin` desde el panel (D4), y que un admin cambie roles (D37).
+- "Reinvitar" o activar una invitación revocada que nunca se aceptó (D36). R11 no cambia.
+- Leer o mostrar `user_profiles` (D31, R36).
+- Cerrar sesiones de Clerk al inactivar, webhooks, sincronizar Clerk al cargar la lista (E4) y escribir en Clerk fuera de las invitaciones.
+- "Invitado por", acciones masivas, exportar e índices de búsqueda (D35, D41).
+- Migraciones, dependencias npm y cambios en `lib/auth.ts`, `lib/roles.ts`, `lib/db.ts`, `proxy.ts`, `db/`, `scripts/`, `app/layout.tsx`, `app/globals.css`, `next.config.ts`, `.env.example`, `.gitignore`, `modules/account/` y los archivos de CONTACT-1.
 
 No incluye en AUTH-2.2:
 - Formularios propios de identidad: nombre, apellido, foto, correos, contraseña y sesiones siguen solo en el modal de Clerk (D24).
@@ -71,7 +88,7 @@ No incluye:
 - Edición de identidad (nombre, apellido, foto, correos, contraseña) con formularios propios del panel: la hace el usuario en la UI de Clerk (`UserButton` en AUTH-2, modal `openUserProfile()` desde AUTH-2.1, D24). Los datos opcionales de AUTH-2.2 no son identidad (D30).
 - Alta directa de usuarios sin invitación y registro abierto.
 - Borrado físico de filas de `app_users` desde la aplicación.
-- Reactivar un usuario revocado (se decide al reaprobar AUTH-3).
+- Reactivar automáticamente un usuario revocado. La única reactivación es la manual de AUTH-3, solo para filas ya vinculadas (D36).
 - Página `/admin` del respaldo (demo sin función).
 - Credenciales reales, instancia de Clerk de producción, rama principal de Neon, despliegue.
 - Commit, push, merge o PR sin orden expresa del usuario.
@@ -90,7 +107,7 @@ Decisiones del usuario (2026-11-07):
 
 - **D8. Registro cerrado.** Solo por invitaciones de Clerk y vinculación a `app_users` por email verificado. Una cuenta de Clerk sin fila autorizada en Neon no obtiene acceso. La instancia de Clerk se configura en modo "Restricted". `/sign-up` existe solo para aceptar invitaciones y la home no muestra botón de registro.
 - **D9. `user` accede a `/dashboard`** con permisos básicos (`dashboard:view`), sin administración de usuarios ni módulos no autorizados. AUTH-1 define el permiso y protege la ruta; el dashboard se construye en AUTH-2, no en AUTH-1.
-- **D10. Baja lógica.** Revocar pone `status = 'revoked'`; no se borran filas y se conserva el historial. El acceso se deniega en la siguiente petición (D11). `revoked` es el único estado de baja, también para invitaciones revocadas; no existe `disabled`. Ninguna operación reactiva automáticamente una fila `revoked`: ni el sign-in, ni una invitación nueva, ni `db-grant-superadmin`.
+- **D10. Baja lógica.** Revocar pone `status = 'revoked'`; no se borran filas y se conserva el historial. El acceso se deniega en la siguiente petición (D11). `revoked` es el único estado de baja, también para invitaciones revocadas; no existe `disabled`. Ninguna operación reactiva automáticamente una fila `revoked`: ni el sign-in, ni una invitación nueva, ni `db-grant-superadmin`. Enmendada por D36 (AUTH-3): "Activar" manual desde el panel, solo para filas `revoked` ya vinculadas.
 - **D11. Fuentes únicas.** Clerk es el proveedor de identidad. Neon (`app_users`) es la única fuente de roles, permisos y estado. Cada comprobación de autorización consulta rol y estado en `app_users` en esa petición, en el servidor. `publicMetadata.role` ni ningún claim o cookie se usan para autorizar.
 
 Decisiones del usuario para AUTH-2 (adoptadas el 2026-11-07; cierran P1 y P2):
@@ -174,6 +191,56 @@ Decisiones del propietario para AUTH-2.2 (2026-11-08, "Perfil minimalista estilo
   - Ninguna otra petición consulta a Clerk para esto. Límite aceptado: un cambio hecho en Clerk llega a `app_users` cuando su dueño vuelve a abrir el perfil.
 - **D33. Tipografía sin cambios (O1).** Se mantiene D20b: fuente del sistema de Apple con Inter de respaldo. Geist no vuelve.
 
+Decisiones del propietario para AUTH-3 (2026-11-08: A1 a A8, "Activar" solo para vinculados y valores por defecto aceptados):
+
+- **D34. Fase AUTH-3 y jerarquía (D17).** Esta SDD manda sobre la spec visual. Diferencias con la spec visual, que se aplican:
+  - La pantalla 05 solo cambia el rol: nombre, apellido y correo se ven en solo lectura (A2, D24). La fila "Editar nombre y apellido" de la matriz visual no se implementa.
+  - "Borrar" (pantallas 03 y 06, fila "Borrar" de la matriz) no existe (D10).
+  - Un admin no cambia roles (A6): la fila "Cambiar rol" de la matriz visual queda solo para superadmin.
+  - Sin "Invitado por" en el detalle (A4) ni "Contraseña ••••".
+  - La matriz efectiva es la de D37.
+- **D35. Lista (A3, P-AUTH3-1).**
+  - Lee solo `app_users`, con una sentencia por página.
+  - Búsqueda sin distinguir mayúsculas (`ilike`) en nombre, apellido y correo, con `%` y `_` escapados.
+  - Filtros de estado (Todos, Activos, Inactivos, Invitados) y de rol (Todos, Usuario, Administrador, Superadmin).
+  - Orden: nombre A–Z (por defecto), nombre Z–A, correo A–Z y alta más reciente, siempre con `id` como desempate.
+  - 8 filas por página.
+  - Todo en parámetros de URL validados con zod; un valor inválido usa su valor por defecto.
+  - Una fila sin nombre muestra el correo.
+  - Sin índice de búsqueda (A8): se decide con datos reales.
+  - Límite aceptado (D32): un nombre cambiado en Clerk llega a la lista cuando su dueño vuelve a abrir el perfil.
+- **D36. Estados, Inactivar y Activar (A5, decisión del 2026-11-08).**
+  - Activo = `active`, Inactivo = `revoked`, Invitado = `invited`.
+  - Inactivar una invitación pendiente: revoca la invitación en Clerk y después pone `revoked` (R6).
+  - Inactivar un usuario activo: pone `revoked`. No cierra sus sesiones de Clerk: D11 le niega el acceso en su siguiente petición.
+  - Activar: solo filas `revoked` con `clerk_user_id is not null` (ya vinculadas), que vuelven a `active`. La condición va en la misma sentencia SQL, no solo en la UI.
+  - Una invitación revocada antes de aceptarse (`clerk_user_id is null`) queda revocada para siempre: sin Activar ni Reinvitar. R11 no cambia.
+  - Enmienda D10 solo en esta reactivación manual.
+- **D37. Matriz de permisos (A6, P-AUTH3-4).**
+
+  | Acción | user | admin | superadmin |
+  |---|---|---|---|
+  | Ver "Usuarios", la lista y el detalle | no | sí | sí |
+  | Invitar | no | rol `user` | rol `user` o `admin` |
+  | Cambiar rol | no | no | `user` ↔ `admin`, sobre filas `user` y `admin` |
+  | Inactivar, activar y reenviar invitación | no | filas `user` | filas `user` y `admin` |
+
+  Reglas: nadie actúa sobre su propia fila ni sobre filas `superadmin`, y nadie asigna `superadmin` (D4). La gestión de una fila es `canManageRole(actor.role, fila.role)` (rango estrictamente mayor, ya en `lib/roles.ts`). Los roles asignables son los que el actor gestiona. Cambiar rol es solo de superadmin. La matriz vive en `modules/users/utils/userPermissions.ts`; `lib/roles.ts` no cambia.
+- **D38. Último acceso y sesiones (A4, P-AUTH3-2).**
+  - "Último acceso": una sola llamada `users.getUserList({ userId, limit })` de Clerk por página, con los `clerk_user_id` de las filas vinculadas de esa página (como mucho 8). Trae `lastSignInAt` y la foto (`imageUrl`). Nunca una llamada por fila.
+  - Los `clerk_user_id` solo existen en el servidor. `listUsers` los devuelve aparte de las filas (`UsersListing.clerkUserIds`), la página se los pasa a `getClerkActivity`, y al componente cliente solo llegan las filas sin ids de Clerk y `ClerkActivity`, con clave el id de la fila.
+  - "Sesiones activas": solo en el detalle, con `sessions.getSessionList({ userId, status: "active" })` al abrirlo.
+  - Son lecturas para mostrar, no sincronizaciones: no escriben en Neon (matiza R7).
+  - Sin `clerk_user_id`, o si Clerk falla, se muestra "—" y la página funciona igual.
+- **D39. Sin permiso (A7, P-AUTH3-5).** `/dashboard/users` con rol `user` muestra la vista de la pantalla 11 dentro del shell: candado, "No tienes acceso a Usuarios", una explicación y "Volver al inicio". Las demás denegaciones siguen redirigiendo a `/` (D13).
+- **D40. Invitaciones de Clerk.**
+  - Invitar crea la invitación con `notify: true`, `ignoreExisting: true` y `redirectUrl` = `<origen>/sign-up`. El origen sale de la cabecera `Origin` de la petición de la acción (Next ya la compara con `Host`); sin `Origin` válida `http(s)`, la acción falla con el mensaje genérico. `.env.example` no cambia.
+  - `ignoreExisting: true` solo evita que Clerk rechace la invitación si ese correo ya tiene cuenta o invitación en Clerk. No cambia R2: el acceso sigue exigiendo una fila `invited` sin vincular y se concede solo al vincularla por el correo principal **verificado** en el primer acceso. Una cuenta de Clerk ya existente no obtiene acceso por la invitación, sino por esa vinculación.
+  - Reenviar es una sustitución controlada, porque Clerk no reenvía: revocar la invitación anterior, crear una nueva y guardar su id (R46).
+  - Ningún paso borra filas: si la base rechaza el alta tras crear la invitación, se revoca esa invitación en Clerk.
+- **D41. Componentes (A8, P-AUTH3-6).** `npx shadcn@latest add table alert-dialog select` (`dialog` ya está desde AUTH-2.2). Se reutilizan `sheet`, `dropdown-menu`, `toggle-group`, `badge`, `input`, `label`, `button`, `card`, `skeleton` y `UserAvatar`. Sin dependencias npm ni migraciones.
+- **D42. Errores (E8).** `UsersError` lleva mensajes en español pensados para el usuario. Cualquier otro error devuelve "No se pudo completar la acción. Inténtalo de nuevo." Los errores se registran en el servidor solo con `code` y `message`, sin correos ni datos personales.
+
 ## Inventario de la rama de respaldo
 
 | Archivo del respaldo | Decisión | Motivo |
@@ -228,18 +295,18 @@ Se conserva el diseño completo. Lo pospuesto queda señalado.
 | 13 | `8:1848` | Sidebar contraída | AUTH-2.1 | shell | Completa (R20). La lista de fondo es de AUTH-3 |
 | 17 | `9:2916` | Inicio (user) | AUTH-2.1 | `/dashboard` | Completa (R22), con preferencias en solo lectura |
 | 19 | `10:2848` | Perfil: añadir información | AUTH-2.2 | `/dashboard/profile` | Completa en AUTH-2.2 (R31), sin Ubicación ni "Campo personalizado" (D30) |
-| 01 | `3:34` | Lista (superadmin) | AUTH-3 | `/dashboard/users` | Propuesta. Depende de P-AUTH3-1 y P-AUTH3-2 |
-| 03 | `3:542` | Acciones de fila (superadmin) | AUTH-3 | `/dashboard/users` | Propuesta. P-AUTH3-3 |
-| 04 | `3:794` | Invitar | AUTH-3 | diálogo | Propuesta (CA-13) |
-| 05 | `3:1074` | Editar | AUTH-3 | diálogo | Propuesta. Editar el nombre está bloqueado por P-POST-2 (dependencia obligatoria) |
-| 06 | `3:1362` | Confirmar borrar | AUTH-3 | alerta | Propuesta: quitar de la UI (P-AUTH3-3) |
-| 07 | `3:1631` | Sin resultados | AUTH-3 | `/dashboard/users` | Propuesta |
-| 11 | `4:1482` | Sin permiso | AUTH-3 | `/dashboard/users` | Propuesta. P-AUTH3-5 |
-| 12 | `7:1432` | Detalle de usuario | AUTH-3 | `sheet` | Propuesta. P-AUTH3-2 |
-| 14 | `8:1980` | Editar: cambiar rol | AUTH-3 | diálogo | Propuesta. P-AUTH3-4 |
-| 15 | `9:2395` | Lista (admin) | AUTH-3 | `/dashboard/users` | Propuesta |
-| 16 | `9:2619` | Acciones de fila (admin) | AUTH-3 | `/dashboard/users` | Propuesta. P-AUTH3-3 |
-| 18 | `9:3006` | Matriz de permisos | AUTH-3 | — | Base de los tests de permisos de AUTH-3 |
+| 01 | `3:34` | Lista (superadmin) | AUTH-3 | `/dashboard/users` | Completa (R39, D35, D38) |
+| 03 | `3:542` | Acciones de fila (superadmin) | AUTH-3 | `/dashboard/users` | Sin "Editar" de nombres ni "Borrar": Ver detalles, Cambiar rol, Inactivar o Activar, Reenviar invitación (R40, D34) |
+| 04 | `3:794` | Invitar | AUTH-3 | diálogo | Completa (R42) |
+| 05 | `3:1074` | Editar | AUTH-3 | diálogo | Reducida a cambiar rol, con nombre y correo en solo lectura (R43, D34) |
+| 06 | `3:1362` | Confirmar borrar | AUTH-3 | — | No se implementa (D10, D34). Su estilo de alerta se usa para confirmar Inactivar (R44) |
+| 07 | `3:1631` | Sin resultados | AUTH-3 | `/dashboard/users` | Completa (R39) |
+| 11 | `4:1482` | Sin permiso | AUTH-3 | `/dashboard/users` | Completa (D39) |
+| 12 | `7:1432` | Detalle de usuario | AUTH-3 | `sheet` | Sin "Invitado por" ni "Contraseña ••••" (R41, D34) |
+| 14 | `8:1980` | Editar: cambiar rol | AUTH-3 | diálogo | Completa, solo para superadmin (R43, D37) |
+| 15 | `9:2395` | Lista (admin) | AUTH-3 | `/dashboard/users` | Completa (R39, D37) |
+| 16 | `9:2619` | Acciones de fila (admin) | AUTH-3 | `/dashboard/users` | Sin "Borrar" ni cambiar rol (R40, D37) |
+| 18 | `9:3006` | Matriz de permisos | AUTH-3 | — | Sustituida por D37; base de CA-48 |
 
 Los ID salen de la spec visual: la API de Figma no estuvo disponible para verificarlos en vivo (D17).
 
@@ -255,7 +322,7 @@ Sin implementar. Se decide antes de su fase.
 
 ## Propuestas para AUTH-3
 
-Pendientes de aprobación al reaprobar AUTH-3. No se implementan en AUTH-2.1 ni en AUTH-2.2. El 2026-11-08 el propietario aceptó como dirección para redactar AUTH-3: P-AUTH3-1 a P-AUTH3-6 tal como están, el panel no edita nombres (pantalla 05 solo cambia el rol) y AUTH-3 no lee `user_profiles` (D31). Se formalizan al redactar y aprobar AUTH-3.
+Formalizadas en D34 a D41 (AUTH-3). El texto original se conserva como antecedente. El 2026-11-08 el propietario aceptó como dirección para redactar AUTH-3: P-AUTH3-1 a P-AUTH3-6 tal como están, el panel no edita nombres (pantalla 05 solo cambia el rol) y AUTH-3 no lee `user_profiles` (D31).
 
 - **P-AUTH3-1.** La lista lee `app_users`. Buscar, ordenar o mostrar por nombre, y editar nombres (pantalla 05), quedan bloqueados hasta resolver P-POST-2.
 - **P-AUTH3-2.** "Último acceso" con una sola llamada a Clerk por página (`getUserList({ userId })`, `lastSignInAt`), solo para mostrarlo. R7 se matizaría: es una lectura de visualización, no una sincronización. "Sesiones activas" solo en el panel de detalle. Se quita "Invitado por".
@@ -269,14 +336,14 @@ Pendientes de aprobación al reaprobar AUTH-3. No se implementan en AUTH-2.1 ni 
 1. R1 — Rutas públicas: `/`, `/sign-in`, `/sign-up`. `/dashboard` y todo lo que cuelga de ella exige sesión en `proxy.ts` y permiso en el servidor (layout, página y service). El proxy no es el único control.
 2. R2 — `getActor()` resuelve el usuario actual según D2: busca por `clerk_user_id`; si esa fila existe, devuelve actor solo si `status = 'active'`, y `null` si está `invited` o `revoked`. Si no hay fila, vincula en una sola sentencia `update ... where email = $email and status = 'invited' and clerk_user_id is null returning ...` usando el email primario **verificado**, y la fila pasa a `active`. Desde AUTH-2.2, esa misma sentencia copia también `first_name` y `last_name` de Clerk (D32). Si no, devuelve `null`. Una fila `revoked` o ya vinculada a otro `clerk_user_id` nunca se vincula.
 3. R3 — Roles `user`, `admin`, `superadmin`. Permisos: `dashboard:view` (los tres) y `users:manage` (`admin`, `superadmin`). `canManageRole(actor, target)` exige rango estrictamente mayor.
-4. R4 — Un admin solo invita, cambia de rol o revoca usuarios `user`. Un superadmin, `user` y `admin`. Nadie actúa sobre sí mismo ni asigna `superadmin` (D4).
+4. R4 — Un admin solo invita, inactiva, activa o reenvía la invitación de usuarios `user`, y no cambia roles. Un superadmin actúa sobre `user` y `admin`, y solo él cambia entre `user` y `admin`. Nadie actúa sobre sí mismo ni sobre un `superadmin`, ni asigna `superadmin` (D4). Enmendado en AUTH-3 según D37 (antes, el admin también cambiaba roles).
 5. R5 — Toda server action valida su entrada con zod, comprueba permisos en el service y devuelve solo mensajes de `UsersError` o uno genérico; el error real se registra en el servidor (E8).
 6. R6 — Revocar (baja lógica, D10): invitación pendiente → revocar la invitación en Clerk y después `status = 'revoked'`; un 404 o "ya revocada" de Clerk cuenta como hecho; otros errores abortan sin tocar la base (E7). Usuario activo → `status = 'revoked'`; la cuenta de Clerk no se borra. Ninguna fila se borra.
-7. R7 — El listado lee solo `app_users`; no sincroniza Clerk en cada carga (E4).
+7. R7 — El listado lee solo `app_users`; no sincroniza Clerk en cada carga (E4). Desde AUTH-3, "Último acceso", la foto y "Sesiones activas" se leen de Clerk solo para mostrarlos, sin escribir en Neon (D38).
 8. R8 — `db:migrate` usa `DATABASE_URL_UNPOOLED` (o `DATABASE_URL` si falta), aplica en orden los `.sql` no registrados en `schema_migrations`, cada uno en una transacción, y se detiene en el primer fallo.
 9. R9 — Sin marca de MADRE ni de otro cliente en el código. El nombre visible del panel es una constante de la plantilla.
 10. R10 — Ninguna clave real en el repositorio; `.env.example` solo con marcadores.
-11. R11 — Sin reactivación automática (D10). Invitar un email cuya fila está `revoked` falla con un mensaje claro. `db-grant-superadmin` sobre una fila `revoked` falla con código 1 sin modificarla.
+11. R11 — Sin reactivación automática (D10). Invitar un email cuya fila está `revoked` falla con un mensaje claro. `db-grant-superadmin` sobre una fila `revoked` falla con código 1 sin modificarla. "Activar" de AUTH-3 (D36) es manual, solo para filas ya vinculadas, y no cambia esta regla.
 12. R12 — Último superadmin: ninguna sentencia que cambie rol o estado puede dejar cero filas `superadmin` con `status = 'active'`. Además de D4, la condición se exige solo en los `update` que pueden sacar una fila del conjunto de superadmins activos (cambiar el rol de una fila `superadmin` o pasar una fila `superadmin` `active` a otro estado), dentro de la misma sentencia (`... and not (role = 'superadmin' and status = 'active' and (select count(*) from app_users where role = 'superadmin' and status = 'active') <= 1)`); cero filas afectadas se informa como error. No se exige en las sentencias que solo añaden superadmins activos o no tocan ese conjunto: la vinculación `invited → active` (R2) y la promoción de `db-grant-superadmin`. AUTH-1 y AUTH-2 no tienen sentencias que revoquen ni degraden; R12 se implementa y prueba en AUTH-3 (CA-19).
 13. R13 — `/dashboard` (AUTH-2): `app/dashboard/layout.tsx` y `app/dashboard/page.tsx` llaman cada uno a `requirePermission("dashboard:view")` en el servidor antes de renderizar. Sin sesión → `/sign-in` (proxy y `requirePermission`). Sesión sin fila `active` (sin fila, `invited` no vinculable o `revoked`) → `/`, que muestra el aviso de acceso denegado (D13). No se renderiza nada del shell sin actor.
 14. R14 — Navegación: `lib/navigation.ts` define `APP_NAME`, `NAV_ITEMS` y `visibleNavItems(role, items = NAV_ITEMS)`, que devuelve, en el mismo orden, los ítems sin `permission` o con `can(role, permission)`. En AUTH-2, `NAV_ITEMS` contiene solo "Inicio" (`/dashboard`, sin permiso adicional al del layout).
@@ -377,6 +444,80 @@ Pendientes de aprobación al reaprobar AUTH-3. No se implementan en AUTH-2.1 ni 
     - El campo del diálogo tiene `<label>` visible y su error está asociado con `aria-describedby`.
     - Sin desbordes desde 375 px de ancho; los valores largos se truncan en la fila y se ven completos en el diálogo.
 
+38. R38 — Ruta y navegación (D12, D39):
+    - `app/dashboard/users/page.tsx` (Server Component) llama a `requirePermission("dashboard:view")`. Sin `users:manage`, muestra `UsersNoAccess` (pantalla 11) sin consultar más datos. Con permiso, valida los parámetros de URL (R39), llama a `listUsers(actor, query)` y a `getClerkActivity(listing.clerkUserIds)`, y renderiza `UsersView` solo con `listing.page`, `query` y la actividad, nunca con `clerkUserIds` (D38).
+    - `NAV_ITEMS` añade, después de "Inicio", `{ title: "Usuarios", href: "/dashboard/users", icon: Users, permission: "users:manage" }`. El sidebar sigue sin autorizar nada (D14).
+39. R39 — Lista (pantallas 01, 07 y 15, D35):
+    - Parámetros: `q` (texto recortado, máximo 100 caracteres), `status` (`all`, `active`, `revoked`, `invited`), `role` (`all`, `user`, `admin`, `superadmin`), `sort` (`name`, `-name`, `email`, `-created`) y `page` (entero desde 1). Cada valor inválido o ausente usa su valor por defecto (`""`, `all`, `all`, `name`, `1`). Si `page` pasa de la última página, se muestra la última.
+    - `listUsers` ejecuta una sola sentencia parametrizada sobre `app_users` (ver "Diseño técnico"). Esa sentencia calcula el total con `count(*)` sobre el conjunto filtrado, antes de paginar, y recorta la página pedida a la última válida, así que el total no se pierde aunque la página pedida esté fuera de rango. Con total 0 devuelve página 1 sin filas. El `order by` sale de un mapa cerrado `Record<SortKey, …>` de fragmentos SQL escritos a mano; ningún texto de la entrada llega al SQL fuera de los parámetros.
+    - Cabecera: título "Usuarios" y, debajo, "<total> usuarios" (superadmin) o "Puedes gestionar a quienes tienen rol Usuario" (admin). Botón "Invitar usuario".
+    - Barra: buscador, control segmentado de estado (`toggle-group`), "Rol" (`select`) y "Ordenar" (`select`). Cada cambio actualiza la URL con `router.replace` y vuelve a la página 1.
+    - Tabla (`table` en tarjeta): Nombre (avatar, nombre completo o correo, y el correo debajo), Rol, Estado (`badge`: Activo, Inactivo, Invitado) y Último acceso (fecha relativa en español, o "—"). En cada fila, "Ver" (ojo) abre el detalle, y "…" abre las acciones si el actor tiene alguna sobre ella; si no, el hueco se conserva.
+    - Sin resultados con búsqueda o filtros: "Sin resultados para “<q>”" (o "Sin resultados" sin búsqueda), una ayuda y "Quitar filtros", que vuelve a `/dashboard/users`.
+    - Paginación: "<desde>–<hasta> de <total> usuarios", "Página <p> de <n>", y anterior y siguiente desactivados en los extremos.
+40. R40 — Acciones de fila (pantallas 03 y 16, D37), según `rowActions(actor, fila)`:
+    - "Ver detalles", siempre.
+    - "Cambiar rol": solo superadmin, sobre filas `user` o `admin` que no están `revoked`.
+    - "Inactivar": filas `active` o `invited` que el actor gestiona.
+    - "Activar": filas `revoked` con `clerk_user_id` que el actor gestiona.
+    - "Reenviar invitación": filas `invited` que el actor gestiona.
+    - Nunca sobre la propia fila ni sobre filas `superadmin`. El servidor repite todas estas comprobaciones (R47).
+41. R41 — Detalle (pantalla 12, `sheet` de 420 px a la derecha):
+    - Avatar L, nombre, correo, rol y estado.
+    - CUENTA: Nombre, Apellido, Correo y Rol, en solo lectura, con la nota "Por seguridad, solo <nombre> puede cambiar su nombre, su correo o su contraseña desde su perfil."
+    - ACTIVIDAD: Alta (`created_at`, fecha larga en español), Último acceso y Sesiones activas. Las sesiones se piden al abrir el detalle con `getUserSessionsAction`; mientras cargan se ve un `skeleton`, y sin dato, "—".
+    - Pie: "Cerrar" y, si el actor puede, "Cambiar rol".
+    - Nada de `user_profiles` (R36).
+42. R42 — Invitar (pantalla 04, `dialog` de 440 px):
+    - Correo (enfocado al abrir) y Rol (`select` con los roles asignables del actor; para un admin solo "Usuario"), la nota "Solo un superadmin puede invitar administradores." y "Cancelar" · "Enviar invitación".
+    - Validación (cliente y servidor, el servidor manda): correo válido, recortado y en minúsculas, de 254 caracteres como máximo, y rol entre los asignables.
+    - Service `inviteUser(actor, input, redirectUrl)`:
+      1. Comprueba `users:manage` y que `canManageRole(actor.role, input.role)`.
+      2. Busca la fila por correo. Si está `invited`: "Ya tiene una invitación pendiente. Usa Reenviar invitación." Si está `active`: "Esa persona ya tiene acceso." Si está `revoked`: "Ese correo fue inactivado y no puede invitarse de nuevo." (R11). En los tres casos no llama a Clerk.
+      3. Crea la invitación en Clerk (D40).
+      4. `insert into app_users (email, role, status, invitation_id) values (…, 'invited', …) on conflict (email) do nothing returning id`. Sin fila devuelta (otra petición la creó a la vez): revoca la invitación recién creada, registra el fallo de esa revocación si lo hay, y devuelve "Ese correo ya está registrado."
+    - Si Clerk falla en el paso 3, la base no cambia.
+43. R43 — Cambiar rol (pantallas 05 y 14, solo superadmin):
+    - `dialog` con avatar, nombre y correo en solo lectura, y Rol (`select`): "Usuario · Acceso básico al panel", "Administrador · Gestiona usuarios" y "Superadmin · No se asigna desde el panel" (desactivado). "Cancelar" · "Guardar cambios".
+    - Service `changeUserRole(actor, { id, role })`, con `role` en `user` o `admin`: una sentencia `update app_users set role = $role, updated_at = now() where id = $id and id <> $actorId and role in ('user', 'admin') and status <> 'revoked' and role is distinct from $role` con la cláusula de R12. Solo si `actor.role = 'superadmin'`. Cero filas: "No se pudo cambiar el rol. Recarga la página."
+44. R44 — Inactivar (confirmación con `alert-dialog` de 340 px, mismo estilo que la pantalla 06):
+    - Activo: "¿Inactivar a <nombre>?" y "Perderá el acceso en su próxima acción. Podrás activarlo de nuevo."
+    - Invitado: "¿Revocar la invitación de <correo>?" y "La invitación dejará de funcionar y no podrá reactivarse."
+    - "Cancelar" · "Inactivar" (destructivo).
+    - Service `revokeUser(actor, { id })`:
+      1. Lee la fila y guarda su `status` como `$estadoLeído` y su `invitation_id` como `$anterior`.
+      2. Si está `invited` con `invitation_id`, revoca la invitación `$anterior` en Clerk. Un 404 o "ya revocada" cuenta como hecho; cualquier otro error aborta sin tocar la base (R6, E7).
+      3. Una sentencia `update app_users set status = 'revoked', updated_at = now() where id = $id and status = $estadoLeído and invitation_id is not distinct from $anterior and id <> $actorId and role = any($rolesGestionables)`, con la cláusula de R12. En una fila `active` la condición sobre `invitation_id` no cambia nada, porque solo Reenviar lo modifica, y solo en filas `invited`.
+      4. Cero filas, porque otra operación cambió el estado o la invitación mientras tanto (por ejemplo, un Reenviar que ya sustituyó la invitación): no sobrescribe nada y devuelve "El usuario cambió mientras tanto. Recarga la página." La fila queda `invited` con la invitación nueva de Reenviar, que sigue válida, y se puede volver a inactivar.
+    - Concurrencia con Reenviar (R46): gana el primer `update` que se confirma. Si gana Inactivar, el `update` de Reenviar no encuentra `status = 'invited'` y revoca su invitación nueva. Si gana Reenviar, el `update` de Inactivar no encuentra el `invitation_id` que leyó. En ningún caso queda una fila `revoked` con una invitación válida en Clerk.
+45. R45 — Activar (D36):
+    - Sin confirmación: la acción del menú activa y muestra el resultado.
+    - Service `activateUser(actor, { id })`: una sola sentencia `update app_users set status = 'active', updated_at = now() where id = $id and status = 'revoked' and clerk_user_id is not null and id <> $actorId and role = any($rolesGestionables) returning id`. No llama a Clerk. Cero filas: "Solo se puede activar a quien ya había entrado al panel."
+46. R46 — Reenviar invitación (D40):
+    - Service `resendInvitation(actor, { id }, redirectUrl)`, solo para filas `invited` que el actor gestiona:
+      1. Lee la fila y guarda su `invitation_id` como `$anterior`.
+      2. Revoca la invitación `$anterior` (si la hay); un 404 o "ya revocada" cuenta como hecho, y otro error aborta sin cambios.
+      3. Crea una invitación nueva (D40).
+      4. `update app_users set invitation_id = $nueva, updated_at = now() where id = $id and status = 'invited' and invitation_id is not distinct from $anterior returning id`.
+      5. Sin fila devuelta, porque otra operación cambió el estado o la invitación mientras tanto (por ejemplo, dos reenvíos a la vez o un inactivar): revoca la invitación nueva de esta petición, registra el fallo de esa revocación si lo hay, no hace ninguna otra escritura y devuelve "El usuario cambió mientras tanto. Recarga la página."
+    - Si el paso 3 falla, la fila conserva su `invitation_id` ya revocado y reenviar de nuevo funciona: el paso 2 dará 404.
+    - Con dos reenvíos a la vez, solo el primero que escribe gana. El otro encuentra un `invitation_id` distinto del que leyó y revoca su propia invitación nueva, así que la fila nunca apunta a una invitación revocada mientras otra válida queda huérfana.
+47. R47 — Acciones de servidor (`modules/users/actions/users.actions.ts`, `"use server"`):
+    - Cada una obtiene el actor con `getActor()`. Sin actor activo o sin `users:manage`, devuelve el mensaje genérico sin tocar la base ni Clerk.
+    - Valida su entrada con un esquema zod estricto: claves extra rechazadas y `id` como UUID.
+    - Llama al service, que repite las comprobaciones de permisos y de matriz (R5).
+    - Si sale bien, hace `revalidatePath("/dashboard/users")`. Devuelve el mensaje de `UsersError` o el genérico, y registra el error real con `code` y `message` (D42).
+48. R48 — Privacidad y escrituras:
+    - AUTH-3 no lee `user_profiles` (R36).
+    - Las únicas escrituras en `app_users` son las de R42 a R46, y solo sobre `role`, `status`, `invitation_id` y `updated_at`, más el `insert` de una invitación nueva. Nunca `first_name`, `last_name`, `email` ni `clerk_user_id` de otra fila.
+    - En Clerk, las únicas escrituras son `invitations.createInvitation` e `invitations.revokeInvitation`, y las únicas lecturas, `users.getUserList` y `sessions.getSessionList` (D38).
+    - Ninguna sentencia `delete`.
+49. R49 — Diseño y accesibilidad:
+    - Tokens y estilo de la spec visual (D17, D20, D33), en los dos temas, sin colores sueltos (mismo criterio que CA-27).
+    - Botones de solo icono ("Ver", "Más acciones") con `aria-label`. Badges con texto.
+    - Menús y diálogos por teclado: Escape cierra y el foco vuelve al disparador; los diálogos atrapan el foco.
+    - Desde 375 px de ancho, la tabla se desplaza en horizontal dentro de su tarjeta, sin desbordar la página.
+
 ## Contratos
 
 Variables de entorno (`.env.example`, valores en `.env.local` del usuario):
@@ -433,8 +574,39 @@ Módulo `modules/account` (AUTH-2.2):
 
 `components/shared/AppSidebar.tsx` (AUTH-2, `"use client"`): `AppSidebar({ role }: { role: Role })`.
 
-Server actions (AUTH-3, `modules/users/actions/users.actions.ts`), todas `(input: unknown) => Promise<ActionResult>` con `ActionResult = { ok: true } | { ok: false; error: string }`:
-- `inviteUserAction({ email, role })`, `updateUserRoleAction({ id, role })`, `revokeUserAction({ id })`, `resendInvitationAction({ id })`.
+Módulo `modules/users` (AUTH-3):
+- `schemas/users.schema.ts`:
+  - `usersQuerySchema`: parámetros de R39 con sus valores por defecto; nunca falla.
+  - `inviteInputSchema`, `roleInputSchema` (`role` solo `user` o `admin`) e `idInputSchema` (`id` UUID), todos `z.strictObject`.
+- `types/users.types.ts`:
+  - `UserStatus`, `SortKey`, `UsersQuery`.
+  - `UserRow = { id; email; firstName; lastName; role: Role; status: UserStatus; linked: boolean; createdAt: string }`, sin ningún id de Clerk.
+  - `UsersPage = { rows: UserRow[]; total: number; page: number; pageCount: number }`.
+  - `ClerkActivity = Record<string, { lastSignInAt: number | null; imageUrl: string | null }>`, con clave el id de la fila.
+  - `ActionResult = { ok: true } | { ok: false; error: string }`.
+  - `SessionsResult = { ok: true; activeSessions: number | null } | { ok: false; error: string }`.
+- `utils/userPermissions.ts` (sin `server-only`, lo usan la UI y el service):
+  - `assignableRoles(actorRole: Role): Role[]`.
+  - `rowActions(actor: { id: string; role: Role }, row: UserRow): { changeRole: boolean; revoke: boolean; activate: boolean; resend: boolean }`, según R40 y D37.
+- `services/users.service.ts` (`server-only`):
+  - `UsersError`.
+  - `type UsersListing = { page: UsersPage; clerkUserIds: Record<string, string> }`, declarado y usado solo en el servidor. `clerkUserIds` asocia el id de cada fila vinculada de la página con su `clerk_user_id`.
+  - `listUsers(actor, query): Promise<UsersListing>`.
+  - `getClerkActivity(clerkUserIds: Record<string, string>): Promise<ClerkActivity>`:
+    - Sin ids, no llama a Clerk y devuelve `{}`.
+    - Con ids, hace una sola llamada `getUserList({ userId: Object.values(clerkUserIds), limit })` y devuelve la actividad con clave el id de la fila.
+    - Si falla, devuelve `{}`.
+  - `countActiveSessions` lee el `clerk_user_id` de la fila por su `id` en el servidor; el cliente solo envía el `id` de la fila.
+  - `inviteUser(actor, input, redirectUrl)`, `changeUserRole(actor, input)`, `revokeUser(actor, input)`, `activateUser(actor, input)` y `resendInvitation(actor, input, redirectUrl)`, todas `Promise<void>`.
+  - `countActiveSessions(actor, input): Promise<number | null>`.
+  - Cada una comprueba `users:manage` y la matriz.
+- `server.ts` (`server-only`): exporta `listUsers` y `getClerkActivity` para la página. `index.ts` es seguro para el cliente: exporta `UsersView` y `UsersNoAccess`.
+- `actions/users.actions.ts` (`"use server"`), todas `(input: unknown) => Promise<ActionResult>` salvo la última:
+  - `inviteUserAction({ email, role })`, `updateUserRoleAction({ id, role })`, `revokeUserAction({ id })`, `activateUserAction({ id })`, `resendInvitationAction({ id })`.
+  - `getUserSessionsAction({ id }): Promise<SessionsResult>`.
+- Componentes (cliente):
+  - `UsersView({ actor: { id; role }, page: UsersPage, query: UsersQuery, activity: ClerkActivity })`, con la barra, la tabla, la paginación y el menú de fila.
+  - `InviteUserDialog`, `ChangeRoleDialog`, `UserDetailSheet` y `UsersNoAccess`.
 
 Scripts:
 - `npm run db:migrate` → `node --env-file-if-exists=.env.local scripts/db-migrate.mjs`. Salida `OK <archivo>` / `SKIP <archivo>` / `FAIL <archivo>: <mensaje>`; código 1 si falla.
@@ -463,6 +635,12 @@ Scripts:
 - Sitio web: solo `http` y `https`, para evitar enlaces `javascript:`; se abre con `noopener noreferrer nofollow`. La nota se muestra como texto.
 - Los datos de `user_profiles` son privados del dueño (D31) y no aparecen en registros del servidor: los errores se registran sin los valores.
 
+- AUTH-3: cada acción es un punto de entrada público. Comprueba sesión, fila activa y `users:manage` en cada llamada, valida con zod estricto, y el service repite la matriz de D37 contra el rol leído de `app_users` en esa petición (D11). La UI solo oculta.
+- Las condiciones que importan van dentro de la sentencia SQL, no solo en código previo, para que una carrera no las salte: estado esperado, `id <> actor`, roles gestionables, `clerk_user_id is not null` al activar y la cláusula de R12.
+- Sin borrado físico en Neon ni en Clerk (D10). En Clerk solo se crean y revocan invitaciones (R48).
+- El `redirectUrl` de las invitaciones sale de la cabecera `Origin` validada, que Next compara con `Host` en las acciones; nunca de un campo del formulario (D40).
+- "Último acceso", la foto y las sesiones se muestran solo a quien tiene `users:manage`. Los registros del servidor no incluyen correos (D42).
+
 ## Recuperación
 
 - AUTH-1: integrada en `main` por el merge `0cfcd4a` (PR #4, commit `13b9cd7` de `feat/auth-clerk-neon`). Deshacerla en `main` exige revertir ese merge (`git revert -m 1 0cfcd4a`) con una orden expresa del usuario. AUTH-2 no la toca.
@@ -470,7 +648,8 @@ Scripts:
 - Clerk: instancia de desarrollo; los usuarios de prueba se borran desde su dashboard.
 - AUTH-2: integrada en `main` por el merge `fc97323` (PR #5, commit `8a3a8b2`). Deshacerla exige `git revert -m 1 fc97323` con una orden expresa del usuario. No hay cambios en Neon ni en Clerk que deshacer.
 - AUTH-2.1: integrada en `main` por el merge `18a2414` (PR #8, commit `131c481`). Deshacerla exige `git revert -m 1 18a2414` con una orden expresa del usuario. Las preferencias en `localStorage` se borran desde el navegador. No hay cambios en Neon ni en Clerk que deshacer.
-- AUTH-2.2: parte de `18a2414` y vive en `feat/auth-profile`. Para descartar el código antes de integrarlo: `git worktree remove C:/Users/ronal/template-v2-profile` y `git branch -D feat/auth-profile` desde `C:/Users/ronal/template-v2-pro`. Base de datos (solo rama de desarrollo de Neon, con orden expresa): `drop table user_profiles; delete from schema_migrations where name = '0002_user_profiles.sql';`, o restaurar la rama de Neon a un punto anterior. Los nombres y correos copiados a `app_users` no necesitan deshacerse: Clerk sigue siendo su fuente (D11) y AUTH-2.1 no los usa.
+- AUTH-3: parte de `6885cc1` y vive en `feat/auth-users`. Para descartar el código antes de integrarlo: `git worktree remove C:/Users/ronal/template-v2-users` y `git branch -D feat/auth-users` desde `C:/Users/ronal/template-v2-pro`. No cambia el esquema. Los datos de prueba (filas `invited`, cambios de rol o estado) se corrigen en la rama de desarrollo de Neon con una orden expresa, y las invitaciones de prueba se revocan desde el dashboard de Clerk de desarrollo.
+- AUTH-2.2: integrada en `main` por el merge `ca27a9b` (PR #9, commit `2cdf786`). CONTACT-1 (`6885cc1`) depende de ella, así que deshacerla exige revertir antes CONTACT-1, con una orden expresa del usuario. Base de datos (solo rama de desarrollo de Neon, con orden expresa): `drop table user_profiles; delete from schema_migrations where name in ('0002_user_profiles.sql', '0003_user_profiles_phone_type.sql');` (la `0003` es de CONTACT-1), o restaurar la rama de Neon a un punto anterior. Los nombres y correos copiados a `app_users` no necesitan deshacerse: Clerk sigue siendo su fuente (D11) y AUTH-2.1 no los usa.
 
 ## Criterios de aceptación
 
@@ -679,15 +858,96 @@ Manuales (propietario, claves de desarrollo, rama de desarrollo de Neon):
   - Cambiar el correo principal (verificado) actualiza `app_users.email`; `role` y `status` no cambian y el acceso se mantiene.
   - CA-30 a CA-33 de AUTH-2.1 siguen cumpliéndose, salvo el perfil, que ahora sigue R30.
 
-### AUTH-3 (detalle al reaprobar)
+### AUTH-3
 
-- [ ] CA-13 — Un admin invita a un `user`; no puede invitar `admin` ni `superadmin` (UI y service).
-- [ ] CA-14 — Un superadmin cambia `user` ↔ `admin`; nadie cambia su propio rol ni asigna `superadmin`.
-- [ ] CA-15 — Revocar cumple R6: la fila queda `revoked`, no se borra, y el usuario pierde acceso en su siguiente petición; un error de Clerk distinto de 404 o "ya revocada" no cambia la fila.
-- [ ] CA-16 — Un error interno no llega al cliente: la acción devuelve el mensaje genérico.
-- [ ] CA-17 — Al aceptar la invitación y entrar, la fila pasa a `active` (R2).
-- [ ] CA-18 — Invitar un email `revoked` falla y la fila sigue `revoked` (R11).
-- [ ] CA-19 — Ninguna acción deja cero superadmins activos (R12), probado en el service con la base simulada.
+Automáticos (Reviewer). Los tests del service simulan `@/lib/db` y `@clerk/nextjs/server` con `vi.mock`:
+- [ ] CA-13 — Invitar (R42, D37), en `users.service.test.ts`:
+  - Un admin invita a un `user`. Invitar `admin` o `superadmin` lanza `UsersError` sin llamar a Clerk ni a la base.
+  - Un superadmin invita `user` o `admin`, nunca `superadmin`.
+  - Con una fila `invited` o `active` para ese correo, falla sin llamar a Clerk.
+  - Orden: Clerk primero, después el `insert ... on conflict (email) do nothing`. Si Clerk falla, no hay `insert`. Si el `insert` no devuelve fila, se revoca la invitación nueva.
+  - La invitación usa el `redirectUrl` recibido, `notify: true` e `ignoreExisting: true`.
+  - Reenviar (R46):
+    - Orden: revocar la anterior, crear la nueva y después el `update`, cuyo SQL incluye `status = 'invited'` y `invitation_id is not distinct from` el id leído.
+    - Si Clerk falla al crear, no hay `update`.
+    - Conflicto concurrente: si el `update` no devuelve fila (la base simulada devuelve cero filas), revoca la invitación nueva creada en esa llamada, lanza `UsersError` y no hace más escrituras.
+- [ ] CA-14 — Cambiar rol (R43): solo un superadmin cambia `user` ↔ `admin`. Un admin, la propia fila, una fila `superadmin` o el rol `superadmin` lanzan sin `update`. La sentencia lleva `id <> actor`, `role in ('user', 'admin')` y la cláusula de R12. Cero filas lanza `UsersError`.
+- [ ] CA-15 — Inactivar (R6, R44): con una fila `invited`, revoca en Clerk antes del `update`. Un 404 o "ya revocada" de Clerk sigue adelante; otro error lanza sin `update`. Con una fila `active`, no llama a Clerk. El SQL del `update` pone `revoked` e incluye `status =` el estado leído e `invitation_id is not distinct from` el id leído. Concurrencia entre Inactivar y Reenviar: con una fila `invited` leída con la invitación X, si el `update` no devuelve fila (la base simulada simula que Reenviar ya la cambió a Y), `revokeUser` lanza "El usuario cambió mientras tanto. Recarga la página." sin más escrituras, y no se revoca ninguna invitación distinta de X. Ningún archivo de `modules/users` que no sea un test contiene `delete from`, `deleteUser` ni `deleteInvitation`.
+- [ ] CA-16 — Errores (R47, D42): lectura de `users.actions.ts`. Sin actor o sin `users:manage`, devuelve el mensaje genérico sin llamar al service. Un error que no es `UsersError` devuelve el genérico. Los registros solo llevan `code` y `message`.
+- [ ] CA-18 — Invitar un correo `revoked` lanza "Ese correo fue inactivado y no puede invitarse de nuevo.", sin llamar a Clerk y sin `insert` (R11).
+- [ ] CA-19 — R12: las sentencias de cambiar rol, inactivar y activar contienen la cláusula del último superadmin activo; ninguna acción opera sobre filas `superadmin` (test con la base simulada que inspecciona el texto SQL).
+- [ ] CA-46 — Activar (R45, D36): una sola sentencia con `status = 'revoked'`, `clerk_user_id is not null`, `id <> actor` y los roles gestionables, sin llamar a Clerk. Si no devuelve fila (por ejemplo, una invitación revocada que nunca se aceptó), lanza "Solo se puede activar a quien ya había entrado al panel." `rowActions` no ofrece Activar para una fila `revoked` sin vincular.
+- [ ] CA-47 — Lista (R39):
+  - `users.schema.test.ts`: valores por defecto, valores inválidos que vuelven al defecto, `q` recortado a 100, `page` no numérico o menor que 1 → 1. `inviteInputSchema` pone el correo en minúsculas y rechaza correos inválidos; los esquemas de entrada rechazan claves extra e ids que no son UUID.
+  - `users.service.test.ts`:
+    - `listUsers` ejecuta exactamente una sentencia, con `limit 8`, la página pedida como parámetro, `%` y `_` escapados en la búsqueda, y el `order by` del mapa cerrado para cada `SortKey`. Todos los valores van como parámetros.
+    - El recorte a la última página está en esa misma sentencia (`least(...)` sobre el `count(*)` filtrado). No hay segunda consulta.
+    - Con la base simulada:
+      - Una respuesta de una fila con `total` 0 y columnas de usuario en `null` da `rows: []`, `total: 0`, `page: 1` y `pageCount: 1`.
+      - Una respuesta con `total` 20 y `page` 3, pedida como página 9, da `page: 3` y `pageCount: 3`, con sus filas.
+- [ ] CA-48 — Matriz (D37), en `userPermissions.test.ts`: un caso por celda de la tabla de D37 y por regla (propia fila, fila `superadmin`, Activar solo `revoked` vinculada, Reenviar solo `invited`, Cambiar rol solo superadmin sobre filas no `revoked`), más `assignableRoles` para los tres roles.
+- [ ] CA-49 — Clerk solo para mostrar (D38):
+  - `listUsers` devuelve los `clerk_user_id` solo en `clerkUserIds`; ninguna `UserRow` los contiene.
+  - `getClerkActivity` hace una sola llamada `getUserList` con todos los ids recibidos, ninguna si no hay, y devuelve la actividad con clave el id de la fila. Si falla, devuelve `{}` sin lanzar.
+  - Lectura: la página no pasa `clerkUserIds` a `UsersView`. `countActiveSessions` devuelve `null` sin `clerk_user_id` o si Clerk falla. Ninguna de las dos escribe en la base.
+- [ ] CA-50 — Lectura del código:
+  - La página llama a `requirePermission("dashboard:view")` y, sin `users:manage`, solo renderiza `UsersNoAccess` (D39).
+  - Cada acción llama a `getActor()`, comprueba `users:manage`, valida con su esquema estricto y hace `revalidatePath` solo si sale bien (R47).
+  - SQL parametrizado; ningún nombre de columna ni fragmento de orden sale de la entrada.
+  - `modules/users` no escribe `first_name`, `last_name`, `email` ni `clerk_user_id` en un `update`, y solo usa `createInvitation`, `revokeInvitation`, `getUserList` y `getSessionList` de Clerk (R48).
+- [ ] CA-51 — Privacidad (R36): `git grep -n "user_profiles" -- . ':(exclude)docs'` solo muestra `db/migrations/0002_user_profiles.sql`, `db/migrations/0003_user_profiles_phone_type.sql`, `modules/account/services/profile.service.ts` y su test.
+- [ ] CA-52 — Navegación: `lib/navigation.test.ts` comprueba que `NAV_ITEMS` contiene `/dashboard/users` con `users:manage`, después de "Inicio", y que `visibleNavItems` lo oculta a `user`. Sustituye la última comprobación de CA-12 (D12 cumplida).
+- [ ] CA-53 — Diseño (R49): sin colores sueltos (criterio de CA-27); botones de solo icono con `aria-label`; badges con texto.
+- [ ] CA-54 — Alcance cerrado de archivos respecto a `6885cc1`, con el método de CA-22. Rutas permitidas:
+  - shadcn (`npx shadcn@latest add table alert-dialog select`, sin `--overwrite` ni ediciones manuales; registro `base-nova` consultado el 2026-11-08 con `--dry-run`: crea `table.tsx`, `select.tsx` y `alert-dialog.tsx`, omite `button.tsx` por idéntico y su única dependencia, `cn`, ya está instalada): `components/ui/table.tsx`, `components/ui/select.tsx`, `components/ui/alert-dialog.tsx`.
+  - Navegación: `lib/navigation.ts`, `lib/navigation.test.ts`.
+  - Módulo:
+    - `modules/users/schemas/users.schema.ts`, `modules/users/schemas/users.schema.test.ts`
+    - `modules/users/types/users.types.ts`
+    - `modules/users/utils/userPermissions.ts`, `modules/users/utils/userPermissions.test.ts`
+    - `modules/users/services/users.service.ts`, `modules/users/services/users.service.test.ts`
+    - `modules/users/server.ts`, `modules/users/index.ts`, `modules/users/actions/users.actions.ts`
+    - `modules/users/components/UsersView.tsx`, `modules/users/components/InviteUserDialog.tsx`, `modules/users/components/ChangeRoleDialog.tsx`
+    - `modules/users/components/UserDetailSheet.tsx`, `modules/users/components/UsersNoAccess.tsx`
+  - Ruta: `app/dashboard/users/page.tsx`.
+  - Flujo SDD:
+    - `docs/specs/auth-clerk-neon.md`, `docs/specs/auth-clerk-neon.md.sig`, `docs/specs/approvals.jsonl`
+    - `docs/evidence/auth-users.md` (solo con orden del usuario)
+
+  Verificación en Git Bash desde la raíz del worktree. PASS = sin salida:
+
+  ```sh
+  { git diff --name-only --no-renames 6885cc1; git ls-files -o --exclude-standard; } | sort -u | grep -v -x -F \
+    -e components/ui/table.tsx -e components/ui/select.tsx -e components/ui/alert-dialog.tsx \
+    -e lib/navigation.ts -e lib/navigation.test.ts \
+    -e modules/users/schemas/users.schema.ts -e modules/users/schemas/users.schema.test.ts \
+    -e modules/users/types/users.types.ts \
+    -e modules/users/utils/userPermissions.ts -e modules/users/utils/userPermissions.test.ts \
+    -e modules/users/services/users.service.ts -e modules/users/services/users.service.test.ts \
+    -e modules/users/server.ts -e modules/users/index.ts -e modules/users/actions/users.actions.ts \
+    -e modules/users/components/UsersView.tsx -e modules/users/components/InviteUserDialog.tsx \
+    -e modules/users/components/ChangeRoleDialog.tsx -e modules/users/components/UserDetailSheet.tsx \
+    -e modules/users/components/UsersNoAccess.tsx -e app/dashboard/users/page.tsx \
+    -e docs/specs/auth-clerk-neon.md -e docs/specs/auth-clerk-neon.md.sig -e docs/specs/approvals.jsonl \
+    -e docs/evidence/auth-users.md
+  ```
+
+  Se ejecuta al terminar T16 y T17, y en T18. Si el registro de shadcn genera otra ruta, el resultado es FAIL: la lista solo se amplía editando esta spec y aprobándola de nuevo.
+- [ ] CA-9 y CA-10 sobre AUTH-3 (base `6885cc1`).
+
+Manuales (propietario, claves de desarrollo, rama de desarrollo de Neon, Clerk en modo Restricted):
+- [ ] CA-17 — Invitar y aceptar: un superadmin invita un correo nuevo como `user`. Llega el correo de Clerk, el enlace abre `/sign-up` de la app y, al entrar, la fila pasa a `active` con nombre y apellido (R2, D32). La lista muestra su "Último acceso".
+- [ ] CA-55 — Superadmin:
+  - Búsqueda, filtros, orden y paginación (con más de 8 filas o con filtros), y "Sin resultados" con "Quitar filtros".
+  - El detalle muestra las sesiones activas y no muestra datos de `user_profiles`.
+  - Cambiar rol `user` ↔ `admin`.
+  - Inactivar a un usuario activo: en su siguiente petición llega a `/` con "Tu cuenta no tiene acceso". Activarlo: recupera el acceso.
+  - Inactivar una invitación pendiente: queda revocada en Clerk (el enlace ya no sirve) y su fila no ofrece Activar ni Reenviar.
+  - Reenviar una invitación: llega un correo nuevo y el enlace anterior ya no sirve.
+  - Ningún menú sobre la propia fila ni sobre filas `superadmin`.
+- [ ] CA-56 — Admin: "Invitar" solo ofrece "Usuario"; sin "Cambiar rol"; menú solo en filas `user`; subtítulo "Puedes gestionar a quienes tienen rol Usuario".
+- [ ] CA-57 — User: el sidebar no muestra "Usuarios" y `/dashboard/users` muestra la vista "No tienes acceso a Usuarios" dentro del shell, con "Volver al inicio".
+- [ ] CA-58 — Regresión y diseño: CA-30 a CA-33, CA-43 a CA-45 y los manuales de CONTACT-1 siguen cumpliéndose. Pantallas 01, 04, 07, 11, 12, 14, 15 y 16 en tema claro y oscuro, con teclado y a 375 px de ancho sin desbordes.
 
 ## Diseño técnico
 
@@ -721,7 +981,46 @@ Manuales (propietario, claves de desarrollo, rama de desarrollo de Neon):
   ```
 
   Solo cambia la columna elegida; las otras cinco conservan lo que tenga la fila en ese momento, así que guardados concurrentes de campos distintos no se pisan. Dos guardados del mismo campo dejan el último (lo esperado). El perfil devuelto sale del `returning` de esa misma sentencia.
-- AUTH-3: `modules/users/` con `types/`, `schemas/`, `services/users.service.ts` (`server-only`), `actions/users.actions.ts`, `components/UsersTable.tsx`, `components/InviteUserDialog.tsx`, `index.ts`. Tabla shadcn simple con filtro local; sin TanStack Table (YAGNI).
+- AUTH-3 empieza con `npm ci` en el worktree nuevo (no tiene `node_modules`). Antes de escribir, el developer lee la spec visual (pantallas 01, 03, 04, 05, 07, 11, 12, 14, 15 y 16), la guía de `page.js` en `node_modules/next/dist/docs/` (`searchParams` es una promesa en Next 16), la de Server Actions y `revalidatePath`, y los tipos de `InvitationApi`, `UserApi` y `SessionApi` en `node_modules/@clerk/backend`.
+- AUTH-3, `app/dashboard/users/page.tsx`: `const actor = await requirePermission("dashboard:view")`. Si `!can(actor.role, "users:manage")`, `return <UsersNoAccess />`. Si no, `usersQuerySchema.parse(await searchParams)`, `const listing = await listUsers(actor, query)` y `const activity = await getClerkActivity(listing.clerkUserIds)` desde `@/modules/users/server`, y `<UsersView actor={{ id: actor.id, role: actor.role }} page={listing.page} query={query} activity={activity} />`.
+- AUTH-3, `listUsers`: una sola sentencia con este esquema. El `order by` sale del mapa cerrado, `$patron` es `'%' || $q_escapado || '%'` y `$page` es la página pedida (entero ≥ 1):
+
+  ```sql
+  with filtered as (
+    select id, email, first_name, last_name, role, status, clerk_user_id, created_at
+    from app_users
+    where ($status = 'all' or status = $status)
+      and ($role = 'all' or role = $role)
+      and ($q = '' or email ilike $patron escape '\' or first_name ilike $patron escape '\'
+           or last_name ilike $patron escape '\' or (first_name || ' ' || last_name) ilike $patron escape '\')
+  ),
+  paging as (
+    select count(*)::int as total,
+           least($page, greatest(ceil(count(*) / 8.0)::int, 1)) as page
+    from filtered
+  )
+  select p.total, p.page, f.*
+  from paging p
+  left join lateral (
+    select filtered.*, row_number() over (order by <fragmento del mapa>, id) as position
+    from filtered
+    order by <fragmento del mapa>, id
+    limit 8 offset (p.page - 1) * 8
+  ) f on true
+  order by f.position
+  ```
+
+  El `order by f.position` exterior garantiza el orden final: Postgres no asegura que un `join` conserve el orden de la subconsulta. `position` no sale del service.
+
+  - `paging` siempre devuelve una fila, así que el total y la página efectiva llegan aunque no haya resultados: con total 0 sale una sola fila con `f.*` en `null`, que el service descarta (`rows: []`, `page: 1`, `pageCount: 1`).
+  - `pageCount = max(ceil(total / 8), 1)`.
+  - El service devuelve `UsersListing` (ver "Contratos"). `clerk_user_id` nunca llega al cliente.
+- AUTH-3, cláusula de R12 en las sentencias de cambiar rol, inactivar y activar: `and not (role = 'superadmin' and status = 'active' and (select count(*) from app_users where role = 'superadmin' and status = 'active') <= 1)`.
+- AUTH-3, roles gestionables en SQL: `role = any(${assignableRoles(actor.role)})`, la misma lista que usa la UI.
+- AUTH-3, errores de Clerk al revocar: se detectan con `isClerkAPIResponseError` de `@clerk/nextjs/errors` (export comprobado en 7.9.25).
+  - Cuentan como hecho: HTTP 404, y un 400 cuyo `errors[0].code` indique "ya revocada" según la documentación de Clerk. El developer anota en la evidencia el código exacto y su fuente.
+  - Si no encuentra ese código documentado, solo el 404 cuenta como hecho: cualquier otro error aborta sin tocar la base, que es el lado seguro.
+- AUTH-3, `UsersView` (cliente): estado de diálogos y del detalle; la barra y la paginación cambian la URL con `useRouter().replace` y `useSearchParams`, y cada acción va en `useTransition`. Tras un `ok`, el `revalidatePath` de la acción refresca la lista. Si falla, el diálogo sigue abierto con el error. Sin TanStack Table (YAGNI).
 - Antes de escribir código, el developer lee la guía de `proxy` en `node_modules/next/dist/docs/` y la de Clerk para Next.js.
 
 ## Reutilización
@@ -731,14 +1030,13 @@ Manuales (propietario, claves de desarrollo, rama de desarrollo de Neon):
 - De shadcn: `sidebar`, `badge`, `sheet`, `tooltip`, `separator`, `skeleton` e `input` (AUTH-2); `avatar`, `dropdown-menu`, `switch`, `toggle-group`, `label` y `card` (AUTH-2.1); `table`, `dialog`, `alert-dialog` y `select` (AUTH-3).
 - AUTH-2.1: `requirePermission`, `ROLE_LABELS`, `visibleNavItems`, `APP_NAME`, `useIsMobile` y `AppSidebar` de AUTH-2; patrón nav-user del bloque sidebar de shadcn.
 - AUTH-2.2: `getActor`, `requirePermission`, `getDb` y el runner `db:migrate` de AUTH-1; `UserAvatar`, `SectionLabel`, `Card`, `Skeleton`, `dropdown-menu`, `input`, `label` y `button` ya instalados; zod v4. Solo se añade `dialog` (también lo usará AUTH-3).
+- AUTH-3: `getActor`, `requirePermission`, `getDb`, `can`, `canManageRole` y `ROLE_LABELS` sin cambios; `NAV_ITEMS` y `visibleNavItems`; `UserAvatar` y `SectionLabel`; `dialog`, `sheet`, `dropdown-menu`, `toggle-group`, `badge`, `input`, `label`, `button`, `card` y `skeleton` ya instalados. Del respaldo, solo como referencia de UI: `UsersTable` y `UserDialog`. No se porta su service (E3 a E8).
 
 ## Archivos sensibles
 
-Fase AUTH-2.2 (coinciden con el patrón sensible del hook; se desbloquean solo con esta spec aprobada y mientras su plan tenga tareas abiertas):
+Fase AUTH-3: ninguno. Ninguna ruta permitida de CA-54 coincide con el patrón sensible del hook (`modules/users/*`, `lib/navigation*`, `app/dashboard/users/*` y `components/ui/*` no contienen `auth`, y no hay `db/`, `proxy.*`, `scripts/db-*` ni `lib/roles|db`).
 
-- `db/migrations/0002_user_profiles.sql`
-- `lib/auth.ts`
-- `lib/auth.test.ts`
+Fase AUTH-2.2 (cerrada). Se citan en línea y sin viñetas para que el hook no las desbloquee mientras el plan de AUTH-3 esté abierto: `db/migrations/0002_user_profiles.sql`, `lib/auth.ts`, `lib/auth.test.ts`.
 
 Fase AUTH-2.1 (cerrada): ninguno. Ninguna ruta permitida de CA-29 coincide con el patrón sensible del hook (`modules/account/*` no contiene `auth`, y no hay `db/`, `proxy.*`, `scripts/db-*` ni `lib/roles|db`).
 
@@ -757,7 +1055,7 @@ Ninguno.
 - AUTH-2: `lib/navigation.test.ts` (CA-12). Sin tests de `AppSidebar`, layout, página, `loading.tsx`, `error.tsx` ni `hooks/use-mobile.ts` (D16: sin lógica propia más allá de `matchMedia`): no tienen lógica propia más allá de `visibleNavItems` y `requirePermission` (ya probado en CA-5); los Server Components async no se pueden probar con Vitest.
 - AUTH-2.1: `modules/account/utils/uiPreferences.test.ts` (CA-26). Sin tests de componentes, páginas ni del script de tema: no tienen lógica propia más allá de `parseUiPreferences`.
 - AUTH-2.2: `profile.schema.test.ts` (CA-34), `profileFields.test.ts` (CA-35), `profile.service.test.ts` (CA-36) y los casos nuevos de `lib/auth.test.ts` (CA-37). Sin tests de `ProfileView`, `ProfileFieldDialog`, la página ni la acción: la acción solo encadena `getActor`, el esquema y el service, ya probados, y se revisa por lectura (CA-38).
-- AUTH-3: `modules/users/services/users.service.test.ts` (R4, R5, R6 con Clerk y base simulados); `users.schema` solo si tiene transformaciones (email en minúsculas).
+- AUTH-3: `users.schema.test.ts` (CA-47), `userPermissions.test.ts` (CA-48), `users.service.test.ts` (CA-13 a CA-15, CA-18, CA-19, CA-46, CA-47 y CA-49) y `lib/navigation.test.ts` (CA-52). Sin tests de componentes, la página ni las acciones: las acciones solo encadenan `getActor`, el esquema y el service, ya probados, y se revisan por lectura (CA-16, CA-50).
 - Sin tests de páginas, layouts ni componentes `components/ui/`.
 
 ## Plan de tareas
@@ -803,7 +1101,7 @@ Ninguno.
 
 ### Fase AUTH-2.2
 
-- [ ] T13 — Datos, validación y sincronización:
+- [x] T13 — Datos, validación y sincronización:
   - `npm ci`.
   - Migración `0002_user_profiles.sql` (sin ejecutarla).
   - `profile.schema.ts`, `profile.types.ts`, `profileFields.ts`, `profile.service.ts`, `server.ts` y sus tests.
@@ -811,21 +1109,38 @@ Ninguno.
   - CA-41 al terminar.
   - Archivos: `db/migrations/0002_user_profiles.sql`, `lib/auth.ts`, `lib/auth.test.ts`, `modules/account/schemas/*`, `modules/account/types/profile.types.ts`, `modules/account/utils/profileFields*`, `modules/account/services/*`, `modules/account/server.ts`.
   - Depende de: —. Secuencial (base).
-- [ ] T14 — Interfaz y acción:
+- [x] T14 — Interfaz y acción:
   - `npx shadcn@latest add dialog` sin `--overwrite`; CA-41 inmediatamente después.
   - `profile.actions.ts`, `ProfileFieldDialog`, `ProfileView` reescrito, `index.ts` y la página.
   - CA-41 al terminar.
   - Archivos: `components/ui/dialog.tsx`, `modules/account/actions/profile.actions.ts`, `modules/account/components/ProfileView.tsx`, `modules/account/components/ProfileFieldDialog.tsx`, `modules/account/index.ts`, `app/dashboard/profile/page.tsx`.
   - Depende de: T13. Secuencial.
-- [ ] T15 — Verificación:
+- [x] T15 — Verificación:
   - El reviewer comprueba CA-9, CA-10 y CA-34 a CA-41.
   - El propietario ejecuta la migración (orden expresa suya) y CA-42 a CA-45.
   - Archivos: ninguno (evidencia en `docs/evidence/auth-profile.md` solo con orden del usuario).
   - Depende de: T14.
 
-### Fase siguiente (sin casillas hasta reaprobar)
+### Fase AUTH-3
 
-- AUTH-3: `npx shadcn add table alert-dialog select` (`dialog` llega en AUTH-2.2); `modules/users/*` con test del service; `app/dashboard/users/page.tsx`; ítem "Usuarios" en `NAV_ITEMS` (D12); R12 en código (CA-19); propuestas P-AUTH3-1 a P-AUTH3-6. P-POST-2 llega resuelta por AUTH-2.2 (D32).
+- [ ] T16 — Datos, permisos y service:
+  - `npm ci`.
+  - `users.schema.ts`, `users.types.ts`, `userPermissions.ts`, `users.service.ts` y `server.ts`, con sus tests (CA-13 a CA-15, CA-18, CA-19 y CA-46 a CA-49).
+  - CA-54 al terminar.
+  - Archivos: `modules/users/schemas/*`, `modules/users/types/users.types.ts`, `modules/users/utils/*`, `modules/users/services/*`, `modules/users/server.ts`.
+  - Depende de: —. Secuencial (base).
+- [ ] T17 — Interfaz, acciones y navegación:
+  - `npx shadcn@latest add table alert-dialog select` sin `--overwrite`; CA-54 inmediatamente después.
+  - `users.actions.ts`, `UsersView`, `InviteUserDialog`, `ChangeRoleDialog`, `UserDetailSheet`, `UsersNoAccess`, `index.ts` y la página.
+  - Ítem "Usuarios" en `NAV_ITEMS` y su test (CA-52).
+  - CA-54 al terminar.
+  - Archivos: `components/ui/table.tsx`, `components/ui/select.tsx`, `components/ui/alert-dialog.tsx`, `modules/users/actions/users.actions.ts`, `modules/users/components/*`, `modules/users/index.ts`, `app/dashboard/users/page.tsx`, `lib/navigation.ts`, `lib/navigation.test.ts`.
+  - Depende de: T16. Secuencial.
+- [ ] T18 — Verificación:
+  - El reviewer comprueba CA-9, CA-10, CA-13 a CA-16, CA-18, CA-19 y CA-46 a CA-54.
+  - El propietario ejecuta CA-17 y CA-55 a CA-58 con claves de desarrollo. Sin migraciones.
+  - Archivos: ninguno (evidencia en `docs/evidence/auth-users.md` solo con orden del usuario).
+  - Depende de: T17.
 
 ## Preguntas abiertas
 
@@ -846,5 +1161,10 @@ Cerradas por el propietario para AUTH-2.2, el 2026-11-08:
 - O2: encabezado sin tarjeta, sin rol ni estado (D29).
 - O3: P-POST-2 se implementa en AUTH-2.2 (D32).
 - Dirección para AUTH-3 (A1 a A8): ver "Propuestas para AUTH-3".
+
+Cerradas por el propietario para AUTH-3, el 2026-11-08:
+- A1 a A8, formalizadas en D34 a D41.
+- "Activar" solo para filas `revoked` ya vinculadas, con la condición en SQL; sin "Reinvitar"; R11 sin cambios (D36).
+- Valores por defecto: reenviar como sustitución controlada (D40), "—" sin último acceso (D38), inactivar sin cerrar sesiones de Clerk (D36), cláusula SQL de R12 (R43 a R45) y SDD por encima de la spec visual (D34).
 
 Ninguna abierta. La zona horaria y el formato de fecha editables siguen pospuestos (P-POST-1).

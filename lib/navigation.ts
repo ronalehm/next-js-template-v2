@@ -1,4 +1,4 @@
-import { LayoutDashboard, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, type LucideIcon, Users } from "lucide-react";
 import { can, type Permission, type Role } from "@/lib/roles";
 
 export const APP_NAME = "Panel";
@@ -12,6 +12,7 @@ export type NavItem = {
 
 export const NAV_ITEMS: readonly NavItem[] = [
   { title: "Inicio", href: "/dashboard", icon: LayoutDashboard },
+  { title: "Usuarios", href: "/dashboard/users", icon: Users, permission: "users:manage" },
 ];
 
 // UI filter only, not access control: every route checks its permission on the server (D14).

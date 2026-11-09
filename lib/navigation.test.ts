@@ -21,13 +21,20 @@ describe("visibleNavItems", () => {
     expect(visibleNavItems(role, items)).toEqual([open, managed, last]);
   });
 
-  it("defaults to NAV_ITEMS", () => {
-    expect(visibleNavItems("user")).toEqual([...NAV_ITEMS]);
+  it.each(["admin", "superadmin"] as const)("defaults to NAV_ITEMS for %s", (role) => {
+    expect(visibleNavItems(role)).toEqual([...NAV_ITEMS]);
   });
 });
 
-describe("NAV_ITEMS", () => {
-  it("does not link to /dashboard/users yet (D12)", () => {
-    expect(NAV_ITEMS.map((item) => item.href)).not.toContain("/dashboard/users");
+describe("NAV_ITEMS (CA-52)", () => {
+  it("has Usuarios at /dashboard/users with users:manage, right after Inicio", () => {
+    expect(NAV_ITEMS.map(({ title, href, permission }) => ({ title, href, permission }))).toEqual([
+      { title: "Inicio", href: "/dashboard", permission: undefined },
+      { title: "Usuarios", href: "/dashboard/users", permission: "users:manage" },
+    ]);
+  });
+
+  it("hides Usuarios from user", () => {
+    expect(visibleNavItems("user").map((item) => item.href)).toEqual(["/dashboard"]);
   });
 });
