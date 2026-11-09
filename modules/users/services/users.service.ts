@@ -4,11 +4,14 @@ import { isClerkAPIResponseError } from "@clerk/nextjs/errors";
 import type { Actor } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { can, type Role } from "@/lib/roles";
+import { PANEL_ROLES } from "../schemas/users.schema";
 import { assignableRoles, rowActions } from "../utils/userPermissions";
 import type {
   ClerkActivity,
+  EditUserInput,
   IdInput,
   InviteInput,
+  NameInput,
   RoleInput,
   SortKey,
   UserRow,
@@ -65,9 +68,9 @@ function assertManager(actor: Actor) {
 }
 
 // D42: code and message only, never emails or personal data.
-function logError(step: string, error: unknown) {
+function logError(step: string, error: unknown, context: { step?: string } = {}) {
   const { code, message } = (error ?? {}) as { code?: unknown; message?: unknown };
-  console.error(`users.service: ${step} failed`, { code, message });
+  console.error(`users.service: ${step} failed`, { code, message, ...context });
 }
 
 async function createInvitation(email: string, redirectUrl: string): Promise<string> {
@@ -251,26 +254,121 @@ export async function inviteUser(actor: Actor, input: InviteInput, redirectUrl: 
   }
 }
 
-// R43: superadmin only, user <-> admin, one statement with every condition and R12.
+// USERS-1b: admin and superadmin. The new role is checked against PANEL_ROLES (never superadmin);
+// assignableRoles only filters the rows the actor manages (it stays untouched, so invite/revoke/activate/resend don't change).
+// The invited branch (RN-08) exists only for superadmin, computed here and never taken from the client.
 export async function changeUserRole(actor: Actor, input: RoleInput): Promise<void> {
   assertManager(actor);
-  if (actor.role !== "superadmin" || !assignableRoles(actor.role).includes(input.role) || input.id === actor.id) {
+  if (!PANEL_ROLES.includes(input.role) || input.id === actor.id) {
     throw new UsersError(FORBIDDEN);
   }
 
   const sql = getDb();
+  const isSuperadmin = actor.role === "superadmin";
   const updated = await sql`
     update app_users set role = ${input.role}, updated_at = now()
     where id = ${input.id}
       and id <> ${actor.id}
-      and role in ('user', 'admin')
-      and status <> 'revoked'
+      and role = any(${assignableRoles(actor.role)})
+      and ((status = 'active' and clerk_user_id is not null)
+        or (${isSuperadmin}::boolean and status = 'invited' and clerk_user_id is null))
       and role is distinct from ${input.role}
       and ${sql.unsafe(LAST_SUPERADMIN)}
     returning id`;
 
   if (updated.length === 0) {
     throw new UsersError("No se pudo cambiar el rol. Recarga la página.");
+  }
+}
+
+const NAME_INVALID = "No se pudo guardar: revisa el nombre y el apellido.";
+const PARTIAL =
+  "El cambio se guardó solo en parte: se actualizó en la cuenta, pero no en el panel. Vuelve a intentarlo.";
+
+// USERS-1: Clerk first (one call, no retries, no rollback), then a conditional update in Neon.
+export async function updateUserName(actor: Actor, input: NameInput): Promise<void> {
+  assertManager(actor);
+
+  const sql = getDb();
+  const [row] = (await sql`
+    select role, status, clerk_user_id, first_name, last_name
+    from app_users
+    where id = ${input.id}`) as {
+    role: Role;
+    status: UserStatus;
+    clerk_user_id: string | null;
+    first_name: string | null;
+    last_name: string | null;
+  }[];
+  if (!row) throw new UsersError(CHANGED);
+
+  if (input.id === actor.id || !assignableRoles(actor.role).includes(row.role)) {
+    throw new UsersError(FORBIDDEN);
+  }
+  if (
+    row.status !== "active" ||
+    !row.clerk_user_id ||
+    row.first_name !== input.expectedFirstName ||
+    row.last_name !== input.expectedLastName
+  ) {
+    throw new UsersError(CHANGED);
+  }
+
+  try {
+    const client = await clerkClient();
+    await client.users.updateUser(row.clerk_user_id, { firstName: input.firstName, lastName: input.lastName });
+  } catch (error) {
+    if (isClerkAPIResponseError(error) && error.status === 422) throw new UsersError(NAME_INVALID);
+    throw error;
+  }
+
+  // Clerk is already updated: any failure from here is the partial state, never CHANGED or success.
+  let updated: unknown[] = [];
+  try {
+    updated = await sql`
+      update app_users set first_name = ${input.firstName}, last_name = ${input.lastName}, updated_at = now()
+      where id = ${input.id}
+        and id <> ${actor.id}
+        and role = any(${assignableRoles(actor.role)})
+        and status = 'active'
+        and clerk_user_id = ${row.clerk_user_id}
+        and first_name is not distinct from ${input.expectedFirstName}
+        and last_name is not distinct from ${input.expectedLastName}
+      returning id`;
+  } catch (error) {
+    logError("updateUserName", error, { step: "neon-after-clerk" });
+    throw new UsersError(PARTIAL);
+  }
+
+  if (updated.length === 0) {
+    logError("updateUserName", undefined, { step: "neon-after-clerk" });
+    throw new UsersError(PARTIAL);
+  }
+}
+
+const ROLE_PARTIAL = "El nombre se guardó, pero el rol no se pudo cambiar. Recarga la página y vuelve a intentarlo.";
+
+// USERS-1b RN-06: name first (Clerk + Neon), then role. No rollback, no retries. Role-only payloads (invited rows) skip the name step.
+export async function updateUser(actor: Actor, input: EditUserInput): Promise<void> {
+  assertManager(actor);
+  if (input.id === actor.id || !PANEL_ROLES.includes(input.role)) {
+    throw new UsersError(FORBIDDEN);
+  }
+
+  const nameChanged =
+    "firstName" in input && (input.firstName !== input.expectedFirstName || input.lastName !== input.expectedLastName);
+  const roleChanged = input.role !== input.expectedRole;
+
+  if (nameChanged) await updateUserName(actor, input);
+
+  if (roleChanged) {
+    try {
+      await changeUserRole(actor, { id: input.id, role: input.role });
+    } catch (error) {
+      if (!nameChanged) throw error;
+      logError("updateUser", error, { step: "neon-role-after-name" });
+      throw new UsersError(ROLE_PARTIAL);
+    }
   }
 }
 

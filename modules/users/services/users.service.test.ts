@@ -7,7 +7,7 @@ const { sqlMock, clerk } = vi.hoisted(() => {
   const sqlMock = Object.assign(vi.fn(), { unsafe: (raw: string) => ({ raw }) });
   const clerk = {
     invitations: { createInvitation: vi.fn(), revokeInvitation: vi.fn() },
-    users: { getUserList: vi.fn() },
+    users: { getUserList: vi.fn(), updateUser: vi.fn() },
     sessions: { getSessionList: vi.fn() },
   };
   return { sqlMock, clerk };
@@ -20,6 +20,7 @@ vi.mock("@clerk/nextjs/server", () => ({ clerkClient: async () => clerk }));
 import type { Actor } from "@/lib/auth";
 import type { Role } from "@/lib/roles";
 import type { SortKey, UsersQuery } from "../types/users.types";
+import { assignableRoles } from "../utils/userPermissions";
 import {
   activateUser,
   changeUserRole,
@@ -29,9 +30,12 @@ import {
   listUsers,
   resendInvitation,
   revokeUser,
+  updateUser,
+  updateUserName,
   UsersError,
 } from "./users.service";
 
+const FORBIDDEN = "No tienes permiso para esta acción.";
 const ACTOR_ID = "11111111-1111-4111-8111-111111111111";
 const ROW_ID = "22222222-2222-4222-8222-222222222222";
 const REDIRECT = "https://app.example.com/sign-up";
@@ -60,6 +64,14 @@ const params = (call: Call) => call.slice(1).filter((value) => !isRaw(value));
 const sqlCalls = () => sqlMock.mock.calls as Call[];
 const writes = () => sqlCalls().filter((call) => /^(update|insert|delete)\b/.test(sqlText(call)));
 
+const NAME_INPUT = {
+  id: ROW_ID,
+  firstName: "Ana María",
+  lastName: "Pérez",
+  expectedFirstName: "Ana",
+  expectedLastName: "Perez",
+};
+
 const clerkError = (status: number) => new ClerkAPIResponseError("clerk", { data: [], status });
 
 beforeEach(() => {
@@ -78,6 +90,8 @@ describe("permissions", () => {
     ["revokeUser", () => revokeUser(USER, { id: ROW_ID })],
     ["activateUser", () => activateUser(USER, { id: ROW_ID })],
     ["resendInvitation", () => resendInvitation(USER, { id: ROW_ID }, REDIRECT)],
+    ["updateUserName", () => updateUserName(USER, NAME_INPUT)],
+    ["updateUser", () => updateUser(USER, { id: ROW_ID, role: "admin", expectedRole: "user" })],
   ])("%s rejects an actor without users:manage before touching the database or Clerk", async (_, run) => {
     await expect(run()).rejects.toBeInstanceOf(UsersError);
     expect(sqlMock).not.toHaveBeenCalled();
@@ -340,37 +354,63 @@ describe("inviteUser (CA-13, CA-18)", () => {
   });
 });
 
-describe("changeUserRole (CA-14, CA-19)", () => {
-  it("superadmin changes user <-> admin in one statement with every condition and R12", async () => {
-    sqlMock.mockResolvedValueOnce([{ id: ROW_ID }]);
-
-    await changeUserRole(SUPER, { id: ROW_ID, role: "admin" });
-
-    expect(sqlMock).toHaveBeenCalledTimes(1);
-    const call = sqlCalls()[0];
-    expect(sqlText(call)).toBe(
-      `update app_users set role = $, updated_at = now() where id = $ and id <> $ and role in ('user', 'admin') and status <> 'revoked' and role is distinct from $ and ${R12} returning id`,
-    );
-    expect(params(call)).toEqual(["admin", ROW_ID, ACTOR_ID, "admin"]);
-  });
+describe("changeUserRole (USERS-1b)", () => {
+  const ROLE_FAILED = "No se pudo cambiar el rol. Recarga la página.";
 
   it.each([
-    ["an admin", () => changeUserRole(ADMIN, { id: ROW_ID, role: "user" })],
+    ["superadmin", SUPER, ["user", "admin"], true],
+    ["admin", ADMIN, ["user"], false],
+  ] as [string, Actor, Role[], boolean][])(
+    "%s: one statement with the manageable-rows filter, both row branches, the server-computed superadmin flag and R12",
+    async (_, actor, manageable, isSuper) => {
+      sqlMock.mockResolvedValueOnce([{ id: ROW_ID }]);
+
+      await changeUserRole(actor, { id: ROW_ID, role: "admin" });
+
+      expect(sqlMock).toHaveBeenCalledTimes(1);
+      const call = sqlCalls()[0];
+      expect(sqlText(call)).toBe(
+        `update app_users set role = $, updated_at = now() where id = $ and id <> $ and role = any($) and ((status = 'active' and clerk_user_id is not null) or ($::boolean and status = 'invited' and clerk_user_id is null)) and role is distinct from $ and ${R12} returning id`,
+      );
+      expect(params(call)).toEqual(["admin", ROW_ID, ACTOR_ID, manageable, isSuper, "admin"]);
+    },
+  );
+
+  it.each([
     ["the own row", () => changeUserRole(SUPER, { id: ACTOR_ID, role: "user" })],
     ["the superadmin role", () => changeUserRole(SUPER, { id: ROW_ID, role: "superadmin" as "admin" })],
-  ])("%s throws without update", async (_, run) => {
+  ])("%s throws without SQL", async (_, run) => {
     await expect(run()).rejects.toBeInstanceOf(UsersError);
     expect(sqlMock).not.toHaveBeenCalled();
   });
 
-  it("a superadmin row (excluded by the statement) or a stale row gives zero rows and throws", async () => {
+  it("zero rows (admin over admin/superadmin/invited, stale or already-accepted row) throws the role message", async () => {
     sqlMock.mockResolvedValueOnce([]);
-    await expect(changeUserRole(SUPER, { id: ROW_ID, role: "user" })).rejects.toThrow(
-      new UsersError("No se pudo cambiar el rol. Recarga la página."),
-    );
-    // The guard lives in the single update: no prior read, and the statement excludes superadmin rows.
+    await expect(changeUserRole(ADMIN, { id: ROW_ID, role: "user" })).rejects.toThrow(new UsersError(ROLE_FAILED));
     expect(writes()).toHaveLength(1);
-    expect(sqlText(writes()[0])).toContain("role in ('user', 'admin')");
+  });
+
+  it("admin limits unchanged (AC-13, AC-16): assignableRoles, invite, revoke, activate and resend stay closed", async () => {
+    expect(assignableRoles("admin")).toEqual(["user"]);
+
+    await expect(inviteUser(ADMIN, { email: "a@b.com", role: "admin" }, REDIRECT)).rejects.toThrow(FORBIDDEN);
+
+    for (const role of ["admin", "superadmin"] as const) {
+      vi.clearAllMocks();
+      sqlMock.mockResolvedValueOnce([{ role, status: "invited", invitation_id: "inv_x", email: "u@b.com", linked: false }]);
+      await expect(revokeUser(ADMIN, { id: ROW_ID })).rejects.toThrow(FORBIDDEN);
+      sqlMock.mockResolvedValueOnce([{ role, status: "invited", invitation_id: "inv_x", email: "u@b.com", linked: false }]);
+      await expect(resendInvitation(ADMIN, { id: ROW_ID }, REDIRECT)).rejects.toThrow(FORBIDDEN);
+      sqlMock.mockResolvedValueOnce([]);
+      await expect(activateUser(ADMIN, { id: ROW_ID })).rejects.toBeInstanceOf(UsersError);
+      expect(params(sqlCalls().at(-1)!)).toContainEqual(["user"]);
+      expect(clerk.invitations.revokeInvitation).not.toHaveBeenCalled();
+      expect(clerk.invitations.createInvitation).not.toHaveBeenCalled();
+    }
+
+    vi.clearAllMocks();
+    sqlMock.mockResolvedValueOnce([{ id: ROW_ID }]);
+    await expect(changeUserRole(ADMIN, { id: ROW_ID, role: "admin" })).resolves.toBeUndefined();
   });
 });
 
@@ -560,5 +600,245 @@ describe("module source (CA-15, R48)", () => {
     for (const file of sourceFiles(join(process.cwd(), "modules/users"))) {
       expect(readFileSync(file, "utf8"), file).not.toMatch(/delete from|deleteUser|deleteInvitation/i);
     }
+  });
+});
+
+describe("updateUserName (USERS-1)", () => {
+  const PARTIAL =
+    "El cambio se guardó solo en parte: se actualizó en la cuenta, pero no en el panel. Vuelve a intentarlo.";
+  const storedRow = (overrides: Record<string, unknown> = {}) => ({
+    role: "user",
+    status: "active",
+    clerk_user_id: "user_target",
+    first_name: "Ana",
+    last_name: "Perez",
+    ...overrides,
+  });
+  const noWrites = () => {
+    expect(clerk.users.updateUser).not.toHaveBeenCalled();
+    expect(writes()).toHaveLength(0);
+  };
+
+  beforeEach(() => {
+    clerk.users.updateUser.mockResolvedValue({});
+  });
+
+  it.each([
+    ["superadmin", SUPER, "user"],
+    ["superadmin", SUPER, "admin"],
+    ["admin", ADMIN, "user"],
+  ] as [string, Actor, Role][])("%s edits an active linked %s: Clerk first with the row's Clerk id, then a guarded update", async (_, actor, role) => {
+    sqlMock.mockResolvedValueOnce([storedRow({ role })]).mockResolvedValueOnce([{ id: ROW_ID }]);
+
+    await expect(updateUserName(actor, NAME_INPUT)).resolves.toBeUndefined();
+
+    expect(clerk.users.updateUser).toHaveBeenCalledTimes(1);
+    expect(clerk.users.updateUser).toHaveBeenCalledWith("user_target", { firstName: "Ana María", lastName: "Pérez" });
+    expect(clerk.users.updateUser.mock.invocationCallOrder[0]).toBeLessThan(sqlMock.mock.invocationCallOrder[1]);
+    const text = sqlText(writes()[0]);
+    expect(text).toContain("id <> $");
+    expect(text).toContain("status = 'active'");
+    expect(text).toContain("clerk_user_id = $");
+    expect(text).toContain("first_name is not distinct from $");
+    expect(text).toContain("last_name is not distinct from $");
+    expect(params(writes()[0])).toEqual([
+      "Ana María",
+      "Pérez",
+      ROW_ID,
+      ACTOR_ID,
+      actor.role === "superadmin" ? ["user", "admin"] : ["user"],
+      "user_target",
+      "Ana",
+      "Perez",
+    ]);
+  });
+
+  it.each([
+    ["admin over admin", ADMIN, ROW_ID, "admin"],
+    ["admin over superadmin", ADMIN, ROW_ID, "superadmin"],
+    ["superadmin over superadmin", SUPER, ROW_ID, "superadmin"],
+    ["own account", SUPER, ACTOR_ID, "user"],
+  ] as [string, Actor, string, Role][])("rejects %s without Clerk or writes", async (_, actor, id, role) => {
+    sqlMock.mockResolvedValueOnce([storedRow({ role })]);
+
+    await expect(updateUserName(actor, { ...NAME_INPUT, id })).rejects.toThrow("No tienes permiso para esta acción.");
+    noWrites();
+  });
+
+  it.each([
+    ["missing row", null],
+    ["invited", storedRow({ status: "invited" })],
+    ["revoked", storedRow({ status: "revoked" })],
+    ["unlinked", storedRow({ clerk_user_id: null })],
+    ["different first name", storedRow({ first_name: "Otro" })],
+    ["different last name", storedRow({ last_name: null })],
+  ])("%s: CHANGED without Clerk or writes", async (_, row) => {
+    sqlMock.mockResolvedValueOnce(row ? [row] : []);
+
+    await expect(updateUserName(SUPER, NAME_INPUT)).rejects.toThrow("El usuario cambió mientras tanto. Recarga la página.");
+    noWrites();
+  });
+
+  it("Clerk failure: no Neon write and the error propagates", async () => {
+    sqlMock.mockResolvedValueOnce([storedRow()]);
+    clerk.users.updateUser.mockRejectedValueOnce(clerkError(500));
+
+    const error = await updateUserName(SUPER, NAME_INPUT).catch((e) => e);
+
+    expect(error).not.toBeInstanceOf(UsersError);
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("Clerk 422: name message and no Neon write", async () => {
+    sqlMock.mockResolvedValueOnce([storedRow()]);
+    clerk.users.updateUser.mockRejectedValueOnce(clerkError(422));
+
+    await expect(updateUserName(SUPER, NAME_INPUT)).rejects.toThrow(
+      "No se pudo guardar: revisa el nombre y el apellido.",
+    );
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("Neon throws after Clerk: partial message, single Clerk call, log with step and no personal data", async () => {
+    sqlMock.mockResolvedValueOnce([storedRow()]).mockRejectedValueOnce(Object.assign(new Error("db down"), { code: "X1" }));
+
+    await expect(updateUserName(SUPER, NAME_INPUT)).rejects.toThrow(PARTIAL);
+
+    expect(clerk.users.updateUser).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledWith("users.service: updateUserName failed", {
+      code: "X1",
+      message: "db down",
+      step: "neon-after-clerk",
+    });
+  });
+
+  it("0 rows after Clerk: partial message (not CHANGED), single Clerk call, tagged log", async () => {
+    sqlMock.mockResolvedValueOnce([storedRow()]).mockResolvedValueOnce([]);
+
+    const error = await updateUserName(SUPER, NAME_INPUT).catch((e) => e);
+
+    expect(error).toBeInstanceOf(UsersError);
+    expect(error.message).toBe(PARTIAL);
+    expect(clerk.users.updateUser).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledWith("users.service: updateUserName failed", {
+      code: undefined,
+      message: undefined,
+      step: "neon-after-clerk",
+    });
+  });
+});
+
+describe("updateUser (USERS-1b)", () => {
+  const ROLE_PARTIAL = "El nombre se guardó, pero el rol no se pudo cambiar. Recarga la página y vuelve a intentarlo.";
+  const ROLE_FAILED = "No se pudo cambiar el rol. Recarga la página.";
+  const CHANGED = "El usuario cambió mientras tanto. Recarga la página.";
+  const storedRow = (overrides: Record<string, unknown> = {}) => ({
+    role: "user",
+    status: "active",
+    clerk_user_id: "user_target",
+    first_name: "Ana",
+    last_name: "Perez",
+    ...overrides,
+  });
+  // Full payload: name changed from NAME_INPUT's expected values; role changes only when overridden.
+  const FULL = { ...NAME_INPUT, role: "user" as const, expectedRole: "user" as const };
+  const ROLE_ONLY = { id: ROW_ID, role: "admin" as const, expectedRole: "user" as const };
+
+  beforeEach(() => {
+    clerk.users.updateUser.mockResolvedValue({});
+  });
+
+  it("role-only payload (invited row): only changeUserRole, no Clerk and no name read", async () => {
+    sqlMock.mockResolvedValueOnce([{ id: ROW_ID }]);
+
+    await updateUser(SUPER, ROLE_ONLY);
+
+    expect(sqlMock).toHaveBeenCalledTimes(1);
+    expect(sqlText(sqlCalls()[0])).toMatch(/^update app_users set role = \$/);
+    expect(clerk.users.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("full payload against an invited row: CHANGED without Clerk or writes", async () => {
+    sqlMock.mockResolvedValueOnce([storedRow({ status: "invited", clerk_user_id: null })]);
+
+    await expect(updateUser(SUPER, FULL)).rejects.toThrow(CHANGED);
+    expect(clerk.users.updateUser).not.toHaveBeenCalled();
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("only the name changed: name steps run, the role is not written", async () => {
+    sqlMock.mockResolvedValueOnce([storedRow()]).mockResolvedValueOnce([{ id: ROW_ID }]);
+
+    await updateUser(ADMIN, FULL);
+
+    expect(clerk.users.updateUser).toHaveBeenCalledTimes(1);
+    expect(writes()).toHaveLength(1);
+    expect(sqlText(writes()[0])).toMatch(/^update app_users set first_name/);
+  });
+
+  it("only the role changed: no Clerk call, a single role update", async () => {
+    sqlMock.mockResolvedValueOnce([{ id: ROW_ID }]);
+
+    await updateUser(ADMIN, { ...ROLE_ONLY, firstName: "Ana", lastName: "Perez", expectedFirstName: "Ana", expectedLastName: "Perez" });
+
+    expect(clerk.users.updateUser).not.toHaveBeenCalled();
+    expect(writes()).toHaveLength(1);
+    expect(sqlText(writes()[0])).toMatch(/^update app_users set role/);
+  });
+
+  it("both changed: Clerk, name update in Neon, then role update", async () => {
+    sqlMock.mockResolvedValueOnce([storedRow()]).mockResolvedValueOnce([{ id: ROW_ID }]).mockResolvedValueOnce([{ id: ROW_ID }]);
+
+    await updateUser(SUPER, { ...FULL, role: "admin" });
+
+    expect(writes().map((call) => sqlText(call).split(" ").slice(0, 5).join(" "))).toEqual([
+      "update app_users set first_name =",
+      "update app_users set role =",
+    ]);
+    expect(clerk.users.updateUser.mock.invocationCallOrder[0]).toBeLessThan(sqlMock.mock.invocationCallOrder[1]);
+  });
+
+  it("nothing changed: no calls", async () => {
+    await updateUser(SUPER, { ...FULL, firstName: "Ana", lastName: "Perez" });
+    expect(sqlMock).not.toHaveBeenCalled();
+    expect(clerk.users.updateUser).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the superadmin role", SUPER, { ...FULL, role: "superadmin" as "admin" }],
+    ["the own row", SUPER, { ...FULL, id: ACTOR_ID }],
+  ])("%s is rejected before touching anything", async (_, actor, input) => {
+    await expect(updateUser(actor, input)).rejects.toThrow(FORBIDDEN);
+    expect(sqlMock).not.toHaveBeenCalled();
+    expect(clerk.users.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("name failure (Clerk or pre-check): the role is not attempted", async () => {
+    sqlMock.mockResolvedValueOnce([storedRow()]);
+    clerk.users.updateUser.mockRejectedValueOnce(clerkError(422));
+    await expect(updateUser(SUPER, { ...FULL, role: "admin" })).rejects.toThrow("No se pudo guardar: revisa el nombre y el apellido.");
+
+    vi.clearAllMocks();
+    sqlMock.mockResolvedValueOnce([storedRow({ first_name: "Otro" })]);
+    await expect(updateUser(SUPER, { ...FULL, role: "admin" })).rejects.toThrow(CHANGED);
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("role fails after the name was written: ROLE_PARTIAL, one Clerk call, tagged log without personal data", async () => {
+    sqlMock.mockResolvedValueOnce([storedRow()]).mockResolvedValueOnce([{ id: ROW_ID }]).mockResolvedValueOnce([]);
+
+    await expect(updateUser(SUPER, { ...FULL, role: "admin" })).rejects.toThrow(ROLE_PARTIAL);
+
+    expect(clerk.users.updateUser).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledWith("users.service: updateUser failed", {
+      code: undefined,
+      message: new UsersError(ROLE_FAILED).message,
+      step: "neon-role-after-name",
+    });
+  });
+
+  it("role fails with no name change: its own message, not ROLE_PARTIAL", async () => {
+    sqlMock.mockResolvedValueOnce([]);
+    await expect(updateUser(SUPER, ROLE_ONLY)).rejects.toThrow(ROLE_FAILED);
   });
 });

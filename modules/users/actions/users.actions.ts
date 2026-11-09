@@ -5,14 +5,14 @@ import { headers } from "next/headers";
 import type { z } from "zod";
 import { type Actor, getActor } from "@/lib/auth";
 import { can } from "@/lib/roles";
-import { idInputSchema, inviteInputSchema, roleInputSchema } from "../schemas/users.schema";
+import { editUserInputSchema, idInputSchema, inviteInputSchema } from "../schemas/users.schema";
 import {
   activateUser,
-  changeUserRole,
   countActiveSessions,
   inviteUser,
   resendInvitation,
   revokeUser,
+  updateUser,
   UsersError,
 } from "../services/users.service";
 import type { ActionResult, SessionsResult } from "../types/users.types";
@@ -72,8 +72,8 @@ export async function inviteUserAction(input: unknown): Promise<ActionResult> {
   );
 }
 
-export async function updateUserRoleAction(input: unknown): Promise<ActionResult> {
-  return mutate("updateUserRoleAction", roleInputSchema, input, changeUserRole);
+export async function updateUserAction(input: unknown): Promise<ActionResult> {
+  return mutate("updateUserAction", editUserInputSchema, input, updateUser);
 }
 
 export async function revokeUserAction(input: unknown): Promise<ActionResult> {

@@ -33,7 +33,7 @@ import { activateUserAction, resendInvitationAction, revokeUserAction } from "..
 import { usersQuerySchema } from "../schemas/users.schema";
 import type { ActionResult, ClerkActivity, SortKey, UserRow, UsersPage, UsersQuery } from "../types/users.types";
 import { assignableRoles, rowActions } from "../utils/userPermissions";
-import { ChangeRoleDialog } from "./ChangeRoleDialog";
+import { EditUserDialog } from "./EditUserDialog";
 import { InviteUserDialog } from "./InviteUserDialog";
 import { displayName, formatLastAccess, StatusBadge, UserDetailSheet } from "./UserDetailSheet";
 
@@ -158,8 +158,8 @@ export function UsersView({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [detailRow, setDetailRow] = useState<UserRow | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [roleRow, setRoleRow] = useState<UserRow | null>(null);
-  const [roleOpen, setRoleOpen] = useState(false);
+  const [editRow, setEditRow] = useState<UserRow | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
   const [revokeRow, setRevokeRow] = useState<UserRow | null>(null);
   const [revokeOpen, setRevokeOpen] = useState(false);
 
@@ -214,9 +214,9 @@ export function UsersView({
     setDetailOpen(true);
   }
 
-  function openRole(row: UserRow) {
-    setRoleRow(row);
-    setRoleOpen(true);
+  function openEdit(row: UserRow) {
+    setEditRow(row);
+    setEditOpen(true);
   }
 
   const from = page.total === 0 ? 0 : (page.page - 1) * PAGE_SIZE + 1;
@@ -358,7 +358,7 @@ export function UsersView({
               {page.rows.map((row) => {
                 const name = displayName(row);
                 const actions = rowActions(actor, row);
-                const hasActions = actions.changeRole || actions.revoke || actions.activate || actions.resend;
+                const hasActions = actions.edit || actions.revoke || actions.activate || actions.resend;
 
                 return (
                   <TableRow key={row.id} className="hover:bg-accent">
@@ -403,8 +403,8 @@ export function UsersView({
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-50 rounded-xl shadow-popover">
                               <DropdownMenuItem onClick={() => openDetail(row)}>Ver detalles</DropdownMenuItem>
-                              {actions.changeRole ? (
-                                <DropdownMenuItem onClick={() => openRole(row)}>Cambiar rol</DropdownMenuItem>
+                              {actions.edit ? (
+                                <DropdownMenuItem onClick={() => openEdit(row)}>Editar</DropdownMenuItem>
                               ) : null}
                               {actions.activate ? (
                                 <DropdownMenuItem
@@ -494,23 +494,23 @@ export function UsersView({
         onOpenChange={setDetailOpen}
         row={detailRow}
         activity={detailRow ? activity[detailRow.id] : undefined}
-        canChangeRole={detailRow ? rowActions(actor, detailRow).changeRole : false}
-        onChangeRole={() => {
+        canEdit={detailRow ? rowActions(actor, detailRow).edit : false}
+        onEdit={() => {
           setDetailOpen(false);
-          if (detailRow) openRole(detailRow);
+          if (detailRow) openEdit(detailRow);
         }}
         finalFocus={finalFocus}
       />
 
-      <ChangeRoleDialog
-        open={roleOpen}
-        onOpenChange={setRoleOpen}
-        row={roleRow}
-        imageUrl={roleRow ? (activity[roleRow.id]?.imageUrl ?? null) : null}
+      <EditUserDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        row={editRow}
+        imageUrl={editRow ? (activity[editRow.id]?.imageUrl ?? null) : null}
         finalFocus={finalFocus}
         onSaved={() => {
-          setRoleOpen(false);
-          setNotice({ ok: true, text: "Rol actualizado." });
+          setEditOpen(false);
+          setNotice({ ok: true, text: "Usuario actualizado." });
         }}
       />
 

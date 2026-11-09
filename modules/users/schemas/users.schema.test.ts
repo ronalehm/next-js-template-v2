@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { idInputSchema, inviteInputSchema, roleInputSchema, usersQuerySchema } from "./users.schema";
+import {
+  editUserInputSchema,
+  idInputSchema,
+  inviteInputSchema,
+  nameInputSchema,
+  roleInputSchema,
+  usersQuerySchema,
+} from "./users.schema";
 
 const UUID = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
 const DEFAULTS = { q: "", status: "all", role: "all", sort: "name", page: 1 };
@@ -49,6 +56,69 @@ describe("inviteInputSchema", () => {
   it("rejects superadmin and extra keys", () => {
     expect(inviteInputSchema.safeParse({ email: "a@b.com", role: "superadmin" }).success).toBe(false);
     expect(inviteInputSchema.safeParse({ email: "a@b.com", role: "user", id: UUID }).success).toBe(false);
+  });
+});
+
+describe("nameInputSchema", () => {
+  const valid = { id: UUID, firstName: "Ana", lastName: "Pérez", expectedFirstName: null, expectedLastName: "P" };
+  const parse = (patch: object) => nameInputSchema.safeParse({ ...valid, ...patch }).success;
+
+  it("accepts a valid payload and normalizes spaces", () => {
+    expect(nameInputSchema.parse(valid)).toEqual(valid);
+    expect(nameInputSchema.parse({ ...valid, firstName: "  Ana   María " }).firstName).toBe("Ana María");
+  });
+
+  it.each(["", "   ", "a".repeat(51), "Ana\nMaría", "Ana\tM", "Ana\u0000"])("rejects the name %j", (name) => {
+    expect(parse({ firstName: name })).toBe(false);
+    expect(parse({ lastName: name })).toBe(false);
+  });
+
+  it("accepts exactly 50 characters", () => {
+    expect(parse({ firstName: "a".repeat(50) })).toBe(true);
+  });
+
+  it("rejects a non-uuid id, extra keys and invalid expected values", () => {
+    expect(parse({ id: "row-1" })).toBe(false);
+    expect(parse({ clerkUserId: "user_1" })).toBe(false);
+    expect(parse({ role: "admin" })).toBe(false);
+    expect(parse({ email: "a@b.com" })).toBe(false);
+    expect(parse({ expectedFirstName: 1 })).toBe(false);
+    expect(parse({ expectedLastName: undefined })).toBe(false);
+  });
+});
+
+describe("editUserInputSchema", () => {
+  const names = { firstName: "Ana", lastName: "Pérez", expectedFirstName: null, expectedLastName: "P" };
+  const full = { id: UUID, ...names, role: "admin", expectedRole: "user" };
+  const roleOnly = { id: UUID, role: "admin", expectedRole: "user" };
+  const ok = (payload: object) => editUserInputSchema.safeParse(payload).success;
+
+  it("accepts a full payload with user and admin roles", () => {
+    expect(ok(full)).toBe(true);
+    expect(ok({ ...full, role: "user" })).toBe(true);
+  });
+
+  it("accepts a role-only payload", () => {
+    expect(ok(roleOnly)).toBe(true);
+  });
+
+  it("rejects superadmin as new role and an invalid expectedRole", () => {
+    expect(ok({ ...full, role: "superadmin" })).toBe(false);
+    expect(ok({ ...roleOnly, role: "superadmin" })).toBe(false);
+    expect(ok({ ...full, expectedRole: "root" })).toBe(false);
+    expect(ok({ ...roleOnly, expectedRole: undefined })).toBe(false);
+  });
+
+  it("rejects extra keys", () => {
+    expect(ok({ ...full, clerkUserId: "user_1" })).toBe(false);
+    expect(ok({ ...roleOnly, email: "a@b.com" })).toBe(false);
+  });
+
+  it("rejects role-only with names, and a single name", () => {
+    expect(ok({ ...roleOnly, firstName: "Ana" })).toBe(false);
+    expect(ok({ ...roleOnly, lastName: "Pérez" })).toBe(false);
+    expect(ok({ ...roleOnly, firstName: "Ana", lastName: "Pérez" })).toBe(false);
+    expect(ok({ ...roleOnly, firstName: "Ana", expectedFirstName: null, expectedLastName: null })).toBe(false);
   });
 });
 

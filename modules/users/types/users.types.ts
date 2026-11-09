@@ -1,8 +1,10 @@
 import type { z } from "zod";
 import type { Role } from "@/lib/roles";
 import type {
+  editUserInputSchema,
   idInputSchema,
   inviteInputSchema,
+  nameInputSchema,
   roleInputSchema,
   SORT_KEYS,
   USER_STATUSES,
@@ -16,6 +18,8 @@ export type UsersQuery = z.output<typeof usersQuerySchema>;
 export type InviteInput = z.output<typeof inviteInputSchema>;
 export type RoleInput = z.output<typeof roleInputSchema>;
 export type IdInput = z.output<typeof idInputSchema>;
+export type NameInput = z.output<typeof nameInputSchema>;
+export type EditUserInput = z.output<typeof editUserInputSchema>;
 
 // Never carries a Clerk id (D38).
 export type UserRow = {
