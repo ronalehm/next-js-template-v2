@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PHONE_COUNTRIES, PHONE_TYPES, toE164 } from "../utils/phone";
+import { PROFILE_FIELD_LABELS } from "../utils/profileFields";
 
 // R30 order: phone first, then the optional fields.
 export const PROFILE_FIELD_KEYS = ["phone", "jobTitle", "company", "birthday", "website", "note"] as const;
@@ -86,3 +87,58 @@ export const profileFieldInputSchema = z.discriminatedUnion("field", [
   fieldInput("website"),
   fieldInput("note"),
 ]);
+
+// ---- Custom fields (SPEC-account-profile-custom-fields) ----
+
+export const MAX_CUSTOM_FIELDS = 10;
+
+// Control chars (\n, \r, tab...) and Unicode line/paragraph separators: single-line text only.
+const MULTILINE_OR_CONTROL = /[\p{Cc}\p{Zl}\p{Zp}]/u;
+
+// Single source for the stored label: trim, collapse inner whitespace, NFC.
+export const normalizeCustomLabel = (raw: string): string => raw.trim().replace(/\s+/g, " ").normalize("NFC");
+
+// Duplicate key within a user's fields (case-insensitive, accents kept). Expects a normalized label.
+export const customLabelKey = (label: string): string => label.toLowerCase();
+
+// Reserved key: case- and accent-insensitive.
+const reservedKey = (label: string): string => label.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+export const RESERVED_LABELS: readonly string[] = [...Object.values(PROFILE_FIELD_LABELS), "Nombre", "Apellido", "Correo"];
+
+const RESERVED_KEYS = new Set(RESERVED_LABELS.map(reservedKey));
+
+const customLabel = z
+  .string()
+  .transform((raw, ctx) => {
+    if (MULTILINE_OR_CONTROL.test(raw)) {
+      ctx.addIssue({ code: "custom", message: "La etiqueta debe ser de una sola línea." });
+      return z.NEVER;
+    }
+    return normalizeCustomLabel(raw);
+  })
+  .pipe(
+    z
+      .string()
+      .min(1, "Escribe una etiqueta.")
+      .max(40, "Máximo 40 caracteres.")
+      .refine((label) => !RESERVED_KEYS.has(reservedKey(label)), "Esa etiqueta ya existe en tu perfil. Usa otra."),
+  );
+
+// Control check runs on the raw input (so "a\n" is not saved by trim), then trim, empty, length.
+const customValue = z
+  .string()
+  .transform((raw, ctx) => {
+    if (MULTILINE_OR_CONTROL.test(raw)) {
+      ctx.addIssue({ code: "custom", message: "El valor debe ser de una sola línea." });
+      return z.NEVER;
+    }
+    return raw.trim();
+  })
+  .pipe(z.string().min(1, "Escribe un valor.").max(200, "Máximo 200 caracteres."));
+
+export const customFieldSchema = z.object({ id: z.uuid(), label: z.string(), value: z.string() });
+export const addCustomFieldInputSchema = z.strictObject({ label: customLabel, value: customValue });
+export const updateCustomFieldInputSchema = z.strictObject({ id: z.uuid(), label: customLabel, value: customValue });
+export const deleteCustomFieldInputSchema = z.strictObject({ id: z.uuid() });
+export const moveCustomFieldInputSchema = z.strictObject({ id: z.uuid(), direction: z.enum(["up", "down"]) });
