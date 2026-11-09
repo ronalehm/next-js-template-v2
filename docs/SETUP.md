@@ -222,10 +222,12 @@ La spec es la fuente de verdad: el código se escribe para cumplirla y la revisi
 
 ### Rutas de trabajo
 
+ODD-LIGHT: desarrollo adaptativo orientado al resultado. Cambio pequeño y reversible, verificado por su resultado, sin spec. Se ejecuta con `Modo: build` y conserva todos los controles: si crece o toca un disparador, pasa a SDD.
+
 | Ruta | Cuándo | Flujo |
 |---|---|---|
 | **READ-ONLY** | Consulta o diagnóstico sin cambios. | Responde el orquestador |
-| **BUILD** | Resultado claro sin decisiones de diseño, ≤ 3 archivos, un solo módulo/capa, sin cambios de contrato de API ni rutas nuevas, y ningún disparador de riesgo. Ej.: bug localizado, estilos, textos, añadir un componente shadcn, refactor pequeño. | Developer → Reviewer (contra la tarea y este documento) |
+| **BUILD (ODD-LIGHT)** | Resultado claro sin decisiones de diseño, ≤ 3 archivos, un solo módulo/capa, sin cambios de contrato de API ni rutas nuevas, y ningún disparador de riesgo. Ej.: bug localizado, estilos, textos, añadir un componente shadcn, refactor pequeño. | Developer → Reviewer (contra la tarea y este documento) |
 | **SDD-LITE** | Funcionalidad o módulo nuevo, ruta nueva con datos, varias capas o módulos, requisitos ambiguos o > 3 archivos. | Spec breve → aprobación → Developer(s) → Reviewer |
 | **SDD-ADVANCED** | Cualquier disparador de riesgo, aunque sea una línea. | Spec con contratos, seguridad y recuperación → aprobación → Developer por fase → Reviewer |
 
@@ -281,7 +283,7 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
 
 - Cada tarea del plan declara los archivos que crea o modifica. Dos tareas se lanzan en paralelo solo si sus archivos son disjuntos y no dependen entre sí.
 - Lo que toca archivos compartidos va primero y en secuencia: instalar dependencias o componentes shadcn, `package.json`, `app/layout.tsx`, `app/providers.tsx`, `lib/`, `components/ui/`, `components/shared/` y los `index.ts` de módulos.
-- Los developers en paralelo solo tocan sus archivos, verifican con `vitest`/`eslint` sobre ellos y no ejecutan `build` (dos builds simultáneos chocan en `.next/`). El build completo lo ejecuta el reviewer al final.
+- Todo developer, en paralelo o no, solo toca sus archivos, verifica con `vitest`/`eslint` sobre ellos (`npx vitest run <archivos>`, `npx eslint <archivos>`) y no ejecuta `npm run build` ni `npx vitest run` sin argumentos (dos builds simultáneos chocan en `.next/`). La verificación integral la ejecuta el reviewer una vez por revisión, según la tabla de su agente.
 - Nadie hace commits; los decide el usuario.
 
 ### Agentes
@@ -385,6 +387,8 @@ Qué unidades requieren unit tests y qué casos cubren.
 ## Preguntas abiertas
 (solo si hay)
 ```
+
+Para SDD-ADVANCED, usar además `docs/templates/spec-advanced.md`.
 
 ### Checklist del Reviewer
 

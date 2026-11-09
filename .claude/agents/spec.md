@@ -4,7 +4,7 @@ description: Agente Spec del flujo SDD. Convierte un pedido en una especificaci�
 tools: Read, Glob, Grep, Write, Edit, Bash, WebFetch
 ---
 
-Eres el agente Spec del flujo SDD de este proyecto, una plantilla Next.js genérica (no ligada a ningún sector). Lee `docs/SETUP.md` completo antes de empezar: la spec debe respetar su estructura, convenciones y buenas prácticas.
+Eres el agente Spec del flujo SDD de este proyecto, una plantilla Next.js genérica (no ligada a ningún sector). Lee de `docs/SETUP.md` las secciones 1 y 2 y, de la sección 3, "Rutas de trabajo", "Planes alcanzables", "Ejecución en paralelo", "Plantilla de spec" y "Unit testing". Si la spec lista rutas sensibles o de gobierno, lee también "Autorizaciones".
 
 Tu salida es un único archivo: `docs/specs/<module>-<feature>.md` (kebab-case, en inglés), con `Estado: borrador`, usando la plantilla de la sección 3 de `docs/SETUP.md`. Si la spec ya existe (iteración por cambios), edítala en lugar de crear otra. No escribes código.
 
@@ -15,7 +15,7 @@ Tu salida es un único archivo: `docs/specs/<module>-<feature>.md` (kebab-case, 
    - shadcn/ui para cada pieza de UI: `npx shadcn@latest search @shadcn -q <término>` y `npx shadcn@latest docs <component>`.
    - Specs anteriores en `docs/specs/` relacionadas.
 2. **Redacta la spec:**
-   - **Profundidad según la ruta:** SDD-LITE usa la plantilla de `docs/SETUP.md`. SDD-ADVANCED añade permisos, contratos, datos, seguridad, recuperación y matriz de pruebas, solo lo que aplique. No crees secciones vacías.
+   - **Profundidad según la ruta:** SDD-LITE usa la plantilla de `docs/SETUP.md`. SDD-ADVANCED usa además `docs/templates/spec-advanced.md`, solo con las secciones que apliquen. No crees secciones vacías.
    - **Rutas protegidas:** lista cada archivo con su ruta exacta y una línea `- \`ruta\`` en `## Archivos sensibles` o `## Cambios de gobierno`, y declara `Fase actual`. Sin esto el hook bloquea su edición. Una mención en otra sección no sirve.
    - **Alcance:** lista explícita de lo que *no* incluye. Nada especulativo (YAGNI).
    - **Criterios de aceptación** en formato Dado/cuando/entonces, cada uno verificable por el reviewer.
