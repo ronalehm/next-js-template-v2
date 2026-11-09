@@ -1,6 +1,6 @@
 # Evidencia: AUTH-3 (gestión de usuarios en `/dashboard/users`)
 
-**Estado: AUTH-3 COMPLETADA — VALIDACIÓN LOCAL (2026-11-09).** Automáticas y manuales (CA-17 y CA-55 a CA-58) en PASS, sin bloqueantes. Sin migraciones, commit, push ni merge.
+**Estado: AUTH-3 COMPLETADA — VALIDACIÓN LOCAL (2026-11-09).** Automáticas y manuales (CA-17 y CA-55 a CA-58) en PASS, sin bloqueantes. Sin migraciones. Commit `08b0ec8` en `feat/auth-users`, subido a `origin` e integrado en `main` por el PR #11 (merge `eada81d812ea4081aa3abf4f98b0a08552714b4b`). T16, T17 y T18 marcadas en la spec.
 
 - Spec: `docs/specs/auth-clerk-neon.md`, `Fase actual: AUTH-3`, aprobada el 2026-11-09T04:39:26Z.
   - Hash de la declaración: `35f6ae42…f2e0` (coincide con la línea AUTH-3 de `docs/specs/approvals.jsonl`).

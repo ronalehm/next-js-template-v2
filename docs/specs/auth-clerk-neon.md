@@ -1123,20 +1123,20 @@ Ninguno.
 
 ### Fase AUTH-3
 
-- [ ] T16 — Datos, permisos y service:
+- [x] T16 — Datos, permisos y service:
   - `npm ci`.
   - `users.schema.ts`, `users.types.ts`, `userPermissions.ts`, `users.service.ts` y `server.ts`, con sus tests (CA-13 a CA-15, CA-18, CA-19 y CA-46 a CA-49).
   - CA-54 al terminar.
   - Archivos: `modules/users/schemas/*`, `modules/users/types/users.types.ts`, `modules/users/utils/*`, `modules/users/services/*`, `modules/users/server.ts`.
   - Depende de: —. Secuencial (base).
-- [ ] T17 — Interfaz, acciones y navegación:
+- [x] T17 — Interfaz, acciones y navegación:
   - `npx shadcn@latest add table alert-dialog select` sin `--overwrite`; CA-54 inmediatamente después.
   - `users.actions.ts`, `UsersView`, `InviteUserDialog`, `ChangeRoleDialog`, `UserDetailSheet`, `UsersNoAccess`, `index.ts` y la página.
   - Ítem "Usuarios" en `NAV_ITEMS` y su test (CA-52).
   - CA-54 al terminar.
   - Archivos: `components/ui/table.tsx`, `components/ui/select.tsx`, `components/ui/alert-dialog.tsx`, `modules/users/actions/users.actions.ts`, `modules/users/components/*`, `modules/users/index.ts`, `app/dashboard/users/page.tsx`, `lib/navigation.ts`, `lib/navigation.test.ts`.
   - Depende de: T16. Secuencial.
-- [ ] T18 — Verificación:
+- [x] T18 — Verificación:
   - El reviewer comprueba CA-9, CA-10, CA-13 a CA-16, CA-18, CA-19 y CA-46 a CA-54.
   - El propietario ejecuta CA-17 y CA-55 a CA-58 con claves de desarrollo. Sin migraciones.
   - Archivos: ninguno (evidencia en `docs/evidence/auth-users.md` solo con orden del usuario).
