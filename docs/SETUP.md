@@ -271,6 +271,9 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
   Bloquea también comandos legítimos que mencionen ambos, como `grep record` sobre el hook: usar Grep o Read.
 - La declaración de gobierno se firma tal como la imprime el hook. Si el agente cambiara el comando al transmitirlo, o un proceso con la clave HMAC añadiera una solicitud con otras rutas, el usuario lo vería al firmar: comparar `sesion:` con `/status` y revisar `rutas:` es su control.
 - En una sesión de escritorio con worktree corre la copia del hook del checkout principal. Si esa copia ya incluye la comprobación de integridad y difiere de la del worktree, bloquea; una copia anterior no lo detecta.
+- Sobre `docs/specs` los agentes usan Read/Grep/Glob, no Bash; sobre el hook, no `grep record`. Una lista de lectura Bash queda fuera de alcance (requeriría spec propia).
+- **Hook desalineado entre checkouts:** `checkIntegrity()` bloquea. El usuario alinea el hook en todos los checkouts y reinicia la sesión. Rollback: revertir el commit del hook y re-firmar con `node.exe .claude/hooks/spec-approval.mjs statement <spec>`.
+- **BUILD no evita una aprobación SDD:** si el trabajo toca disparadores, rutas protegidas o gobierno, se reclasifica a SDD. En `Modo: build` la spec se cita por slug, no por ruta, para evidencia UAT; citarla no la hace autorizadora.
 - Mientras una spec con su plan abierto liste una ruta sensible, `Modo: build` puede editarla: el hook no conoce la tarea. `reviewer` lo revisa en el diff.
 - Las únicas capas fuera del alcance del usuario local son `managed-settings.json`, protegido por administrador, y reglas del servidor Git.
 
@@ -330,7 +333,7 @@ Usuario → Orquestador → Spec → [aprobación del usuario] → Developer(s) 
    - El usuario puede editar código y módulos directamente; el flujo y los bloqueos aplican a los agentes.
 4. **Implementación:** uno o varios Developers (en paralelo cuando el plan lo permite) implementan las tareas y sus tests.
 5. **Revisión:** el Reviewer valida contra la spec. Si hay observaciones bloqueantes, vuelven al Developer y se revisa de nuevo (máximo 3 ciclos; después se consulta al usuario).
-6. **Cierre:** el orquestador marca las tareas hechas en el plan; si quedan fases, se continúan en otra sesión.
+6. **Cierre:** tras el APROBADO del reviewer con evidencia por AC, el orquestador marca las tareas del plan y los AC cumplidos; marcar no invalida la aprobación y desmarcar está bloqueado. Si quedan fases, se continúan en otra sesión.
 
 Si durante la implementación la spec resulta incompleta o incorrecta, se actualiza la spec primero y luego el código, nunca al revés.
 
@@ -353,6 +356,7 @@ Fuente única de las reglas UAT para cualquier `<INICIATIVA>`. Cita «Rutas de t
 - El usuario comunica libremente; el Orchestrator traduce a una ficha técnica READ-ONLY de 10 campos y recomienda; el usuario no elige ODD/SDD.
 - Decisiones del usuario sobre una observación: incluir en este ciclo, posponer al backlog, rechazar, solicitar reformulación. No usan «apruebo» ni «aprobar»: `apruebo docs/specs/<slug>.md` solo significa aprobación de spec. Una observación no es un cambio autorizado.
 - Una mejora opcional no bloquea el cierre; un defecto crítico de seguridad, permisos, aislamiento o integridad de datos bloquea la aceptación correspondiente.
+- La criticidad liga urgencia y bloqueo (crítica: inmediata y bloquea la aceptación afectada; funcional: según impacto; mejora opcional: backlog) y no determina la ruta ni autoriza `Modo: build`.
 - ID al registrar: `<INICIATIVA>-ADJ-nn`; la clasificación es un atributo y no renombra el ID.
 - Tras una corrección se repiten solo las pruebas afectadas y las regresiones necesarias, justificando el alcance. Los ciclos usan el bucle y tope vigentes («Flujo SDD», paso 5).
 

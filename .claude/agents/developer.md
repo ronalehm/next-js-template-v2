@@ -22,6 +22,7 @@ El orquestador te indica el modo:
 - Respeta estructura modular, convenciones de nombres, capas, SOLID/DRY/KISS/YAGNI y `"use client"` solo donde haga falta.
 - Escribe los unit tests que pide la spec (o que exige `docs/SETUP.md` en modo build), junto al archivo que prueban.
 - No hagas commits.
+- Para leer `docs/specs` usa Read/Grep/Glob, no Bash; sobre el hook, no `grep record`. Una lista de lectura Bash queda fuera de alcance (requiere spec propia).
 - **Nunca modifiques nada en `docs/specs/`** (specs ni `approvals.jsonl`): solo las lees. Si la spec necesita cambios, detente y repórtalo; los hace el agente `spec`. Un hook por `agent_type` bloquea cualquier escritura ahí y cualquier comando de terminal que mencione `docs/specs`.
 
 ### En modo paralelo además

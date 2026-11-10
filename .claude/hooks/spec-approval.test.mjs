@@ -1212,3 +1212,71 @@ test("sections: '## Gobierno afectado por fase' does not authorize paths (AC-14)
     assert.equal(write(p, rel).code, 2, `${rel} is only mentioned under Gobierno afectado por fase`);
   }
 });
+
+// RN-08: planOpen only looks at the "### Fase <id>" subsection of the current phase.
+
+const phased = (p, current, plan, name = "g") =>
+  p.write(
+    name,
+    `# ${name}\n\n- Estado: borrador\n- Fase actual: ${current}\n\n## Archivos sensibles\n- \`proxy.ts\`\n\n` +
+      `## Cambios de gobierno\n- \`CLAUDE.md\`\n\n## Plan\n${plan}`,
+  );
+
+test("plan by phase: a closed phase does not reuse permissions (AC-B4)", () => {
+  const p = project();
+  phased(p, "A", "### Fase A\n- [x] T1\n\n### Fase B\n- [ ] T2\n");
+  assert.equal(approve(p).code, 0);
+  assert.equal(write(p, "proxy.ts").code, 2, "sensitive path of the closed phase A");
+  const r = authorize(p);
+  assert.equal(r.code, 2, "governance request rejected");
+  assert.match(r.out, /plan terminado/);
+  assert.equal(write(p, "CLAUDE.md").code, 2, "governance path of the closed phase A");
+});
+
+test("plan by phase: open in the current phase authorizes; closed current phase does not (AC-B5)", () => {
+  const p = project();
+  phased(p, "A", "### Fase A\n- [ ] T1\n\n### Fase B\n- [x] T2\n");
+  approve(p);
+  assert.equal(write(p, "proxy.ts").code, 0, "open task in the current phase");
+  assert.equal(authorize(p).code, 0, "governance authorized");
+  assert.equal(write(p, "CLAUDE.md").code, 0);
+
+  const q = project();
+  phased(q, "B", "### Fase A\n- [ ] T1\n\n### Fase B\n- [x] T2\n");
+  approve(q);
+  assert.equal(write(q, "proxy.ts").code, 2, "open only in another phase");
+  assert.equal(authorize(q).code, 2);
+});
+
+test("plan by phase: unticking a box stays blocked, also with subsections (AC-B6)", () => {
+  const p = project();
+  phased(p, "B", "### Fase A\n- [ ] T1\n\n### Fase B\n- [x] T2\n");
+  approve(p);
+  const edit = (old_string, new_string) =>
+    p.run("guard", { tool_input: { file_path: join(p.dir, "docs/specs/g.md"), old_string, new_string } }).code;
+  assert.equal(write(p, "proxy.ts").code, 2, "finished phase B");
+  assert.equal(edit("- [x] T2", "- [ ] T2"), 2, "unticking by edit");
+  assert.equal(write(p, "proxy.ts").code, 2, "still blocked");
+});
+
+test("plan by phase: current phase without a matching subsection authorizes nothing (AC-B7)", () => {
+  const p = project();
+  phased(p, "C", "### Fase A\n- [ ] T1\n\n### Fase B\n- [ ] T2\n");
+  approve(p);
+  assert.equal(write(p, "proxy.ts").code, 2, "C with only A and B");
+  const r = authorize(p);
+  assert.equal(r.code, 2);
+  assert.match(r.out, /no tiene subsección "### Fase C"/);
+
+  const q = project();
+  phased(q, "1", "### Fase 10\n- [ ] T1\n");
+  approve(q);
+  assert.equal(write(q, "proxy.ts").code, 2, "1 is not Fase 10");
+  assert.match(authorize(q).out, /no tiene subsección "### Fase 1"/);
+
+  const s = project();
+  phased(s, "B", "- [ ] T1\n- [ ] T2\n");
+  approve(s);
+  assert.equal(write(s, "proxy.ts").code, 0, "no subsections: whole section counts");
+  assert.equal(authorize(s).code, 0);
+});

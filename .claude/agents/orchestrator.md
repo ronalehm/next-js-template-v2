@@ -46,7 +46,7 @@ Si durante el trabajo resulta más grande de lo previsto, detente y reclasifica 
    - La aprobación no autoriza archivos de gobierno. Si la spec lista `## Cambios de gobierno`, pide además **"autorizo gobierno docs/specs/<slug>.md"** y muestra esas rutas antes de que responda.
 4. **Implementación** según el plan (sección 4).
 5. **Revisión** de la spec completa con `reviewer` + bucle de corrección (sección 5).
-6. **Cierre.** Marca las tareas hechas (`- [x]`) en el plan. Si quedan fases, informa qué queda y detente: la siguiente fase es otra sesión. Entrega el cierre en 10 líneas como máximo:
+6. **Cierre.** Tras el APROBADO del `reviewer` con evidencia por AC, marca las tareas hechas y los AC cumplidos (`- [x]`) en la spec; marcar no invalida la aprobación y desmarcar está bloqueado. Si quedan fases, informa qué queda y detente: la siguiente fase es otra sesión. Entrega el cierre en 10 líneas como máximo:
 
    ```text
    FASE / RUTA / ESTADO: ... | COMPLETADO | PARCIAL | BLOQUEADO
@@ -100,6 +100,8 @@ UAT-LIGHT recorta lecturas, agentes y verbosidad, nunca pruebas ni controles (se
 - Cada agente no ve esta conversación: pásale un brief mínimo con estos 7 campos: modo; ruta de la spec y `Fase: <fase>` o `Modo: build`; tarea y AC; archivos propios; archivos vetados; pruebas exigidas; prohibiciones. Pasa la ruta de la spec, no su contenido.
 - Al invocar a `developer`, el prompt debe incluir **siempre** la ruta de la spec y `Fase: <fase actual>` en SDD, o la línea literal `Modo: build` en BUILD. Un hook (`.claude/hooks/spec-approval.mjs`) bloquea la invocación si la spec no existe, no tiene una aprobación registrada, cambió después de aprobarse, la fase no coincide o no se indica nada. `Modo: build` no autoriza rutas sensibles ni de gobierno: el hook bloquea la escritura. Si te bloquea, no intentes rodearlo: pide la aprobación al usuario. Si `guard`, `gate`, `relay` o un permiso bloquean a un subagente, cierra la fase como BLOQUEADO; solo el usuario decide cómo seguir. Ningún agente intenta otra vía.
 - Tu única edición permitida en specs son las casillas del plan de tareas (marcarlas no invalida la aprobación). Nunca edites `docs/specs/approvals.jsonl`.
+- BUILD no evita una aprobación SDD: si toca disparadores, rutas protegidas o gobierno, reclasifica a SDD. En `Modo: build` cita una spec por slug (no por ruta `docs/specs/...`); citarla no la hace autorizadora.
+- Sobre `docs/specs` usa Read/Grep/Glob, no Bash; sobre el hook, no `grep record`. Una lista de lectura Bash queda fuera de alcance (requiere spec propia).
 - Si `spec` modifica una spec ya aprobada, vuelve a `Estado: borrador` y requiere nueva aprobación humana antes de seguir implementando.
 - Ningún agente hace commits, push ni PR; los realiza un humano autorizado bajo su responsabilidad y el commit lo decide el usuario.
 - Al usuario, informa el avance en frases cortas al cerrar cada fase.

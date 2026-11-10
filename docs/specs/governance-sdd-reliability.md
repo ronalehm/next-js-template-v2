@@ -5,7 +5,7 @@
 - ID: SPEC-governance-sdd-reliability
 - Riesgo: alto (modifica el hook que decide qué puede editar un agente; un error debilita el control o bloquea todo el flujo)
 - Ruta: SDD-ADVANCED (disparador: hooks, agentes, `.claude/settings.json` y `docs/SETUP.md`)
-- Fase actual: A
+- Fase actual: B
 
 ## Objetivo
 
@@ -152,17 +152,17 @@ El ledger y `spec-privileged.jsonl` no cambian de formato: `functionalFields`/`p
 
 ### Fase B
 
-- [ ] AC-B1 (RN-09) Dado el cierre de una fase, entonces `orchestrator.md` y SETUP (Flujo SDD, paso 6) indican que el orquestador marca casillas del plan y AC tras el APROBADO del reviewer con evidencia por AC, que marcar no invalida la aprobación y que desmarcar está bloqueado.
-- [ ] AC-B2 (RN-10) Dado `developer.md`, `orchestrator.md` y SETUP, entonces indican usar Read/Grep/Glob y no Bash sobre `docs/specs` ni `grep record` sobre el hook, y registran como fuera de alcance una lista de lectura Bash (requeriría spec propia).
-- [ ] AC-B3 (RN-10) Dado SETUP, entonces documenta la recuperación por hook desalineado entre checkouts y el rollback de esta spec.
-- [ ] AC-B4 (RN-08, negativo) Dado `Fase actual: A`, `### Fase A` con todo marcado y tareas abiertas en `### Fase B`, cuando se edita una ruta sensible o de gobierno de Fase A, entonces se bloquea, y `autorizo gobierno` se rechaza: una fase cerrada no reutiliza permisos.
-- [ ] AC-B5 (RN-08) Dado `Fase actual: A` con una tarea abierta en `### Fase A`, entonces la autorización se mantiene aunque `### Fase B` esté vacía de abiertas; y con `Fase actual: B`, `### Fase B` sin tareas abiertas y tareas abiertas en `### Fase A`, entonces no autoriza (la fase actual sin tareas abiertas no autoriza).
-- [ ] AC-B6 (RN-08, negativo) Dado una spec autorizada, cuando se desmarca una casilla del plan, entonces sigue bloqueado (el hash lo invalida), también con subsecciones por fase.
-- [ ] AC-B7 (RN-08, negativo) Dado una sección `## Plan*` con subsecciones `### Fase` y `Fase actual` sin subsección coincidente (por ejemplo `Fase actual: C` con solo `### Fase A` y `### Fase B`, o `1` con solo `### Fase 10`), entonces `planOpen` es falso y no se autoriza nada, con un mensaje que lo indica; y sin ninguna subsección `### Fase` se usa toda la sección como hoy.
-- [ ] AC-B8 (RN-11) Dado `orchestrator.md` y SETUP, entonces indican que BUILD no puede usarse para evitar una aprobación SDD (si toca disparadores, rutas protegidas o gobierno se reclasifica a SDD), que en `Modo: build` la spec se cita por slug y no por ruta para evidencia UAT, y que citarla no la hace autorizadora.
-- [ ] AC-B9 (RN-12) Dado el cambio a `Fase actual: B`, entonces `## Cambios de gobierno` lista exactamente las cinco rutas de Fase B (y ninguna de Fase A), y se repiten aprobación, firma, `autorizo gobierno` y firma `.gov.sig` (verificación del reviewer sobre la spec al abrir la fase).
-- [ ] AC-B10 (RN-13) Dado SETUP («Pruebas y observaciones»), entonces contiene una frase que liga criticidad a urgencia/bloqueo (crítica: inmediata y bloquea la aceptación afectada; funcional: según impacto; mejora opcional: backlog) y dice que la criticidad no determina la ruta ni autoriza `Modo: build`. Negativo: una observación crítica no habilita `Modo: build` para tocar rutas protegidas ni de gobierno (RN-11); `docs/forms/uat.md` no se edita (verificación del reviewer sobre el diff).
-- [ ] AC-B11 (RN-14) Dado el PR de esta spec, entonces declara «UAT no aplicable» con justificación registrada y las verificaciones técnicas completas (commit exacto, APROBADO del reviewer, `npx vitest run .claude/hooks` verde sin omitir ninguna prueba, lint/build según la tabla del reviewer); el reviewer lo verifica sobre el diff real. Negativo: no se declara si el diff cambia comportamiento funcional observable, permisos, autorización o autenticación del producto; ante duda aplica el gate obligatorio.
+- [x] AC-B1 (RN-09) Dado el cierre de una fase, entonces `orchestrator.md` y SETUP (Flujo SDD, paso 6) indican que el orquestador marca casillas del plan y AC tras el APROBADO del reviewer con evidencia por AC, que marcar no invalida la aprobación y que desmarcar está bloqueado.
+- [x] AC-B2 (RN-10) Dado `developer.md`, `orchestrator.md` y SETUP, entonces indican usar Read/Grep/Glob y no Bash sobre `docs/specs` ni `grep record` sobre el hook, y registran como fuera de alcance una lista de lectura Bash (requeriría spec propia).
+- [x] AC-B3 (RN-10) Dado SETUP, entonces documenta la recuperación por hook desalineado entre checkouts y el rollback de esta spec.
+- [x] AC-B4 (RN-08, negativo) Dado `Fase actual: A`, `### Fase A` con todo marcado y tareas abiertas en `### Fase B`, cuando se edita una ruta sensible o de gobierno de Fase A, entonces se bloquea, y `autorizo gobierno` se rechaza: una fase cerrada no reutiliza permisos.
+- [x] AC-B5 (RN-08) Dado `Fase actual: A` con una tarea abierta en `### Fase A`, entonces la autorización se mantiene aunque `### Fase B` esté vacía de abiertas; y con `Fase actual: B`, `### Fase B` sin tareas abiertas y tareas abiertas en `### Fase A`, entonces no autoriza (la fase actual sin tareas abiertas no autoriza).
+- [x] AC-B6 (RN-08, negativo) Dado una spec autorizada, cuando se desmarca una casilla del plan, entonces sigue bloqueado (el hash lo invalida), también con subsecciones por fase.
+- [x] AC-B7 (RN-08, negativo) Dado una sección `## Plan*` con subsecciones `### Fase` y `Fase actual` sin subsección coincidente (por ejemplo `Fase actual: C` con solo `### Fase A` y `### Fase B`, o `1` con solo `### Fase 10`), entonces `planOpen` es falso y no se autoriza nada, con un mensaje que lo indica; y sin ninguna subsección `### Fase` se usa toda la sección como hoy.
+- [x] AC-B8 (RN-11) Dado `orchestrator.md` y SETUP, entonces indican que BUILD no puede usarse para evitar una aprobación SDD (si toca disparadores, rutas protegidas o gobierno se reclasifica a SDD), que en `Modo: build` la spec se cita por slug y no por ruta para evidencia UAT, y que citarla no la hace autorizadora.
+- [x] AC-B9 (RN-12) Dado el cambio a `Fase actual: B`, entonces `## Cambios de gobierno` lista exactamente las cinco rutas de Fase B (y ninguna de Fase A), y se repiten aprobación, firma, `autorizo gobierno` y firma `.gov.sig` (verificación del reviewer sobre la spec al abrir la fase).
+- [x] AC-B10 (RN-13) Dado SETUP («Pruebas y observaciones»), entonces contiene una frase que liga criticidad a urgencia/bloqueo (crítica: inmediata y bloquea la aceptación afectada; funcional: según impacto; mejora opcional: backlog) y dice que la criticidad no determina la ruta ni autoriza `Modo: build`. Negativo: una observación crítica no habilita `Modo: build` para tocar rutas protegidas ni de gobierno (RN-11); `docs/forms/uat.md` no se edita (verificación del reviewer sobre el diff).
+- [x] AC-B11 (RN-14) Dado el PR de esta spec, entonces declara «UAT no aplicable» con justificación registrada y las verificaciones técnicas completas (commit exacto, APROBADO del reviewer, `npx vitest run .claude/hooks` verde sin omitir ninguna prueba, lint/build según la tabla del reviewer); el reviewer lo verifica sobre el diff real. Negativo: no se declara si el diff cambia comportamiento funcional observable, permisos, autorización o autenticación del producto; ante duda aplica el gate obligatorio.
 
 ## Trazabilidad
 
@@ -193,14 +193,17 @@ El ledger y `spec-privileged.jsonl` no cambian de formato: `functionalFields`/`p
 
 ## Cambios de gobierno
 
-Solo los de la fase actual (Fase A). `.claude/settings.json` no se modifica. La aprobación funcional no los autoriza: requiere además `autorizo gobierno` y su firma `.gov.sig`.
+Solo los de la fase actual (Fase B). `.claude/settings.json` no se modifica. La aprobación funcional no los autoriza: requiere además `autorizo gobierno` y su firma `.gov.sig`.
 
 - `.claude/hooks/spec-approval.mjs`
 - `.claude/hooks/spec-approval.test.mjs`
+- `.claude/agents/orchestrator.md`
+- `.claude/agents/developer.md`
+- `docs/SETUP.md`
 
 ## Gobierno afectado por fase
 
-Esta sección no la lee el hook (su título no es `## Cambios de gobierno` ni empieza por `## Plan`, y las rutas van en tabla, no como viñetas). Existe porque el hook lee `## Cambios de gobierno` completo sin distinguir fase y la autorización cubre todas las rutas listadas durante 2 h en la sesión: listar aquí las de Fase B en `## Cambios de gobierno` las sobreautorizaría durante Fase A. Al pasar a Fase B se mueven las de Fase B a `## Cambios de gobierno` (y se quitan las de A). Cada fase exige `apruebo` con firma `.sig` y además `autorizo gobierno` con firma `.gov.sig`.
+Esta sección no la lee el hook (su título no es `## Cambios de gobierno` ni empieza por `## Plan`, y las rutas van en tabla, no como viñetas). Existe porque el hook lee `## Cambios de gobierno` completo sin distinguir fase y la autorización cubre todas las rutas listadas durante 2 h en la sesión: listar aquí las de Fase B en `## Cambios de gobierno` las sobreautorizaría durante Fase A. La Fase B ya fue movida a `## Cambios de gobierno` (Fase A cerrada); las filas A quedan como histórico. Cada fase exige `apruebo` con firma `.sig` y además `autorizo gobierno` con firma `.gov.sig`.
 
 | Fase | Archivo de gobierno | Cambio |
 |---|---|---|
@@ -223,10 +226,10 @@ Confirmado sin cambios en ninguna fase: `.claude/agents/spec.md`, `.claude/agent
 Fase A: 2 tareas, 2 archivos. Sin paralelismo.
 
 ### Fase B
-(No es la fase actual. Para ejecutarla: el agente `spec` cambia `Fase actual` a `B`, mueve las rutas de Fase B a `## Cambios de gobierno` y deja `Estado: borrador`; nueva aprobación, firma, `autorizo gobierno` y firma `.gov.sig`.)
-- [ ] T3 — Documentación de cierre y límites: quién marca los AC, Read/Grep/Glob, regla BUILD y spec por slug (Opción 0), recuperación por hook desalineado y rollback, y la frase criticidad→urgencia/bloqueo (RN-13) en SETUP · archivos: `.claude/agents/orchestrator.md`, `.claude/agents/developer.md`, `docs/SETUP.md` · depende de: Fase A cerrada · paralelizable con T4 (archivos disjuntos)
-- [ ] T4 — Hook: `planOpen` limitado a la subsección `### Fase <id>` de la `Fase actual`, con el fallback seguro de RN-08 · archivos: `.claude/hooks/spec-approval.mjs` · depende de: Fase A cerrada · paralelizable con T3
-- [ ] T5 — Pruebas de `planOpen` por fase y negativas AC-B4..AC-B7 · archivos: `.claude/hooks/spec-approval.test.mjs` · depende de: T4 · secuencial
+Fase actual. Pendiente aprobación (apruebo + .sig) y autorización de gobierno (.gov.sig).
+- [x] T3 — Documentación de cierre y límites: quién marca los AC, Read/Grep/Glob, regla BUILD y spec por slug (Opción 0), recuperación por hook desalineado y rollback, y la frase criticidad→urgencia/bloqueo (RN-13) en SETUP · archivos: `.claude/agents/orchestrator.md`, `.claude/agents/developer.md`, `docs/SETUP.md` · depende de: Fase A cerrada · paralelizable con T4 (archivos disjuntos)
+- [x] T4 — Hook: `planOpen` limitado a la subsección `### Fase <id>` de la `Fase actual`, con el fallback seguro de RN-08 · archivos: `.claude/hooks/spec-approval.mjs` · depende de: Fase A cerrada · paralelizable con T3
+- [x] T5 — Pruebas de `planOpen` por fase y negativas AC-B4..AC-B7 · archivos: `.claude/hooks/spec-approval.test.mjs` · depende de: T4 · secuencial
 
 Fase B: 3 tareas, 5 archivos. T3 y T4 son disjuntas y pueden ir en paralelo; T5 espera a T4.
 
@@ -256,7 +259,7 @@ autorizo gobierno docs/specs/governance-sdd-reliability.md
 
 4. Firma de la autorización: el hook imprime el comando, que añade `gobierno <session_id>` a `statement` y escribe `docs/specs/governance-sdd-reliability.md.gov.sig`. Antes de firmar, comprobar que `sesion:` coincide con `/status` y revisar `rutas:` y `caduca:` (2 h).
 5. Antes de implementar: alinear `.claude/hooks/spec-approval.mjs` en todos los checkouts que se usen (hallazgo 6) y reiniciar la sesión.
-6. Para Fase B: cambiar `Fase actual` a `B` y las rutas de `## Cambios de gobierno` (lo hace el agente `spec`, queda en borrador) y repetir 1 a 4.
+6. Para Fase B: el cambio de `Fase actual` a `B` y de las rutas de `## Cambios de gobierno` ya se hizo (agente `spec`, en borrador); los pasos 1 a 4 aplican ahora a Fase B.
 
 ## Preguntas abiertas
 
