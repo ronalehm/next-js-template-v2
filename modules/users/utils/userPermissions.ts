@@ -10,7 +10,7 @@ export function assignableRoles(actorRole: Role): Role[] {
 export function rowActions(
   actor: { id: string; role: Role },
   row: Pick<UserRow, "id" | "role" | "status" | "linked">,
-): { edit: boolean; revoke: boolean; activate: boolean; resend: boolean } {
+): { edit: boolean; revoke: boolean; activate: boolean; resend: boolean; remove: boolean } {
   const manages = actor.id !== row.id && canManageRole(actor.role, row.role);
 
   return {
@@ -19,5 +19,7 @@ export function rowActions(
     revoke: manages && row.status !== "revoked",
     activate: manages && row.status === "revoked" && row.linked,
     resend: manages && row.status === "invited",
+    // Hard delete: superadmin only, never itself or another superadmin (RN-01, RN-02).
+    remove: actor.role === "superadmin" && manages && row.role !== "superadmin",
   };
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  deleteUserInputSchema,
   editUserInputSchema,
   idInputSchema,
   inviteInputSchema,
@@ -137,5 +138,27 @@ describe("roleInputSchema and idInputSchema", () => {
     expect(roleInputSchema.safeParse({ id: UUID, role: "superadmin" }).success).toBe(false);
     expect(roleInputSchema.safeParse({ id: UUID, role: "user", status: "active" }).success).toBe(false);
     expect(idInputSchema.safeParse({ id: UUID, clerkUserId: "user_1" }).success).toBe(false);
+  });
+});
+
+describe("deleteUserInputSchema", () => {
+  const ok = (payload: object) => deleteUserInputSchema.safeParse(payload).success;
+
+  it("accepts a uuid and an email, normalizing case and spaces", () => {
+    expect(deleteUserInputSchema.parse({ id: UUID, email: "  Ana@Example.COM " })).toEqual({
+      id: UUID,
+      email: "ana@example.com",
+    });
+  });
+
+  it("rejects a non-uuid id, an invalid email and one over 254 characters", () => {
+    expect(ok({ id: "row-1", email: "a@b.com" })).toBe(false);
+    expect(ok({ id: UUID, email: "no-es-correo" })).toBe(false);
+    expect(ok({ id: UUID, email: `${"a".repeat(250)}@x.com` })).toBe(false);
+  });
+
+  it("rejects extra and missing keys", () => {
+    expect(ok({ id: UUID, email: "a@b.com", role: "user" })).toBe(false);
+    expect(ok({ id: UUID })).toBe(false);
   });
 });

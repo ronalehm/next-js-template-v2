@@ -5,10 +5,11 @@ import { headers } from "next/headers";
 import type { z } from "zod";
 import { type Actor, getActor } from "@/lib/auth";
 import { can } from "@/lib/roles";
-import { editUserInputSchema, idInputSchema, inviteInputSchema } from "../schemas/users.schema";
+import { deleteUserInputSchema, editUserInputSchema, idInputSchema, inviteInputSchema } from "../schemas/users.schema";
 import {
   activateUser,
   countActiveSessions,
+  deleteUser,
   inviteUser,
   resendInvitation,
   revokeUser,
@@ -78,6 +79,10 @@ export async function updateUserAction(input: unknown): Promise<ActionResult> {
 
 export async function revokeUserAction(input: unknown): Promise<ActionResult> {
   return mutate("revokeUserAction", idInputSchema, input, revokeUser);
+}
+
+export async function deleteUserAction(input: unknown): Promise<ActionResult> {
+  return mutate("deleteUserAction", deleteUserInputSchema, input, deleteUser);
 }
 
 export async function activateUserAction(input: unknown): Promise<ActionResult> {
