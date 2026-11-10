@@ -18,7 +18,7 @@ Requisitos: Node 22 o superior y npm.
 ## Inicio rápido
 
 ```sh
-git clone https://github.com/ronalehm/next-js-template.git mi-proyecto
+git clone https://github.com/ronalehm/next-js-template-v2.git mi-proyecto
 cd mi-proyecto
 npm install
 npm run dev        # http://localhost:3000
