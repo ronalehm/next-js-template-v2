@@ -7,7 +7,7 @@ const { sqlMock, clerk } = vi.hoisted(() => {
   const sqlMock = Object.assign(vi.fn(), { unsafe: (raw: string) => ({ raw }) });
   const clerk = {
     invitations: { createInvitation: vi.fn(), revokeInvitation: vi.fn() },
-    users: { getUserList: vi.fn(), updateUser: vi.fn(), deleteUser: vi.fn() },
+    users: { getUserList: vi.fn(), getUser: vi.fn(), updateUser: vi.fn(), deleteUser: vi.fn() },
     sessions: { getSessionList: vi.fn() },
   };
   return { sqlMock, clerk };
@@ -29,6 +29,7 @@ import {
   getClerkActivity,
   inviteUser,
   listUsers,
+  recoverUserAccess,
   resendInvitation,
   revokeUser,
   updateUser,
@@ -589,6 +590,237 @@ describe("resendInvitation (CA-13)", () => {
     expect(clerk.invitations.revokeInvitation).not.toHaveBeenCalled();
     expect(clerk.invitations.createInvitation).not.toHaveBeenCalled();
     expect(writes()).toHaveLength(0);
+  });
+});
+
+describe("recoverUserAccess (SPEC sync-clerk-neon)", () => {
+  const CLERK_ID = "user_dead";
+  const EMAIL = "persona@example.com";
+  const STILL_EXISTS = "La cuenta todavía existe en el proveedor de acceso. No hay nada que recuperar.";
+  const IDENTITY = "Para recuperar a un administrador debes confirmar que verificaste su identidad.";
+  const INVITATION_FAILED =
+    "No se pudo crear la invitación. Si el correo ya tiene una cuenta o invitación pendiente en el proveedor de acceso, resuélvelo allí e inténtalo de nuevo.";
+  const CHANGED = "El usuario cambió mientras tanto. Recarga la página.";
+  const stored = (overrides: Record<string, unknown> = {}) => ({
+    role: "user",
+    status: "active",
+    invitation_id: "inv_old",
+    email: EMAIL,
+    linked: true,
+    clerk_user_id: CLERK_ID,
+    ...overrides,
+  });
+  const run = (actor: Actor = ADMIN, input: { id?: string; identityVerified?: boolean } = {}) =>
+    recoverUserAccess(actor, { id: ROW_ID, ...input }, REDIRECT);
+  const notFound = () => clerkError(404, "resource_not_found");
+  const untouched = () => {
+    expect(clerk.invitations.createInvitation).not.toHaveBeenCalled();
+    expect(writes()).toHaveLength(0);
+  };
+  const loggedText = () => JSON.stringify((console.error as unknown as { mock: { calls: unknown[] } }).mock.calls);
+
+  beforeEach(() => {
+    clerk.users.getUser.mockRejectedValue(notFound());
+  });
+
+  it("AC-01/AC-22: admin recovers a user row; ignoreExisting false; one conditional update", async () => {
+    sqlMock.mockResolvedValueOnce([stored()]).mockResolvedValueOnce([{ id: ROW_ID }]);
+
+    await run();
+
+    expect(clerk.users.getUser).toHaveBeenCalledWith(CLERK_ID);
+    expect(clerk.invitations.createInvitation).toHaveBeenCalledWith({
+      emailAddress: EMAIL,
+      redirectUrl: REDIRECT,
+      notify: true,
+      ignoreExisting: false,
+    });
+    expect(writes()).toHaveLength(1);
+    const update = sqlCalls()[1];
+    expect(sqlText(update)).toBe(
+      "update app_users set clerk_user_id = null, status = 'invited', invitation_id = $, updated_at = now() where id = $ and status = 'active' and clerk_user_id = $ and invitation_id is not distinct from $ and role = $ and email = $ and id <> $ and role <> 'superadmin' and role = any($) returning id",
+    );
+    expect(params(update)).toEqual(["inv_new", ROW_ID, CLERK_ID, "inv_old", "user", EMAIL, ACTOR_ID, ["user"]]);
+    expect(clerk.invitations.revokeInvitation).not.toHaveBeenCalled();
+  });
+
+  it("AC-21: superadmin recovers an admin row with identityVerified true", async () => {
+    sqlMock.mockResolvedValueOnce([stored({ role: "admin" })]).mockResolvedValueOnce([{ id: ROW_ID }]);
+
+    await run(SUPER, { identityVerified: true });
+
+    expect(params(sqlCalls()[1])).toContain("admin");
+    expect(writes()).toHaveLength(1);
+  });
+
+  it("AC-22: superadmin recovers a user row without identityVerified", async () => {
+    sqlMock.mockResolvedValueOnce([stored()]).mockResolvedValueOnce([{ id: ROW_ID }]);
+    await run(SUPER);
+    expect(writes()).toHaveLength(1);
+  });
+
+  it("AC-20: admin row without identityVerified is rejected before Clerk (also false/undefined)", async () => {
+    for (const input of [{}, { identityVerified: false }]) {
+      sqlMock.mockResolvedValueOnce([stored({ role: "admin" })]);
+      await expect(run(SUPER, input)).rejects.toThrow(new UsersError(IDENTITY));
+    }
+    expect(clerk.users.getUser).not.toHaveBeenCalled();
+    untouched();
+  });
+
+  it("AC-15: actor without users:manage never reaches the database or Clerk", async () => {
+    await expect(run(USER)).rejects.toThrow(new UsersError(FORBIDDEN));
+    expect(sqlMock).not.toHaveBeenCalled();
+    expect(clerk.users.getUser).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["admin on an admin row (even verified)", ADMIN, stored({ role: "admin" }), { identityVerified: true }],
+    ["admin on a superadmin row", ADMIN, stored({ role: "superadmin" }), {}],
+    ["superadmin on a superadmin row", SUPER, stored({ role: "superadmin" }), { identityVerified: true }],
+  ])("AC-02: %s is FORBIDDEN before Clerk", async (_, actor, row, input) => {
+    sqlMock.mockResolvedValueOnce([row]);
+    await expect(run(actor, input)).rejects.toThrow(new UsersError(FORBIDDEN));
+    expect(clerk.users.getUser).not.toHaveBeenCalled();
+    untouched();
+  });
+
+  it("AC-03: own row is FORBIDDEN", async () => {
+    sqlMock.mockResolvedValueOnce([stored()]);
+    await expect(recoverUserAccess(ADMIN, { id: ACTOR_ID }, REDIRECT)).rejects.toThrow(new UsersError(FORBIDDEN));
+    expect(clerk.users.getUser).not.toHaveBeenCalled();
+    untouched();
+  });
+
+  it.each([
+    ["missing row", undefined],
+    ["revoked", stored({ status: "revoked" })],
+    ["invited", stored({ status: "invited", clerk_user_id: null, linked: false })],
+    ["active without link", stored({ clerk_user_id: null, linked: false })],
+  ])("AC-04/AC-11: %s throws CHANGED with zero Clerk calls and no write", async (_, row) => {
+    sqlMock.mockResolvedValueOnce(row === undefined ? [] : [row]);
+    await expect(run()).rejects.toThrow(new UsersError(CHANGED));
+    expect(clerk.users.getUser).not.toHaveBeenCalled();
+    untouched();
+  });
+
+  it("AC-05: getUser 200 means the account exists: message, no invitation, no update", async () => {
+    clerk.users.getUser.mockReset().mockResolvedValue({ id: CLERK_ID });
+    sqlMock.mockResolvedValueOnce([stored()]);
+    await expect(run()).rejects.toThrow(new UsersError(STILL_EXISTS));
+    untouched();
+  });
+
+  it.each([
+    ["401", () => clerkError(401, "authentication_invalid")],
+    ["403", () => clerkError(403, "forbidden")],
+    ["429", () => clerkError(429, "too_many_requests")],
+    ["500", () => clerkError(500)],
+    ["network error", () => new Error("ECONNRESET")],
+    ["404 with another code", () => clerkError(404, "not_found")],
+    ["404 without code", () => clerkError(404)],
+    ["404 not a Clerk error", () => Object.assign(new Error("nf"), { status: 404, errors: [{ code: "resource_not_found" }] })],
+    ["unrecognized value", () => "boom"],
+  ])("AC-06/17/18: getUser %s blocks: error rethrown, no invitation, no update", async (_, make) => {
+    const failure = make();
+    clerk.users.getUser.mockReset().mockRejectedValue(failure);
+    sqlMock.mockResolvedValueOnce([stored()]);
+    await expect(run()).rejects.toBe(failure);
+    untouched();
+  });
+
+  it("AC-08/AC-19: createInvitation failure throws the fixed UsersError and leaves Neon untouched", async () => {
+    clerk.invitations.createInvitation.mockRejectedValueOnce(clerkError(422, "form_identifier_exists"));
+    sqlMock.mockResolvedValueOnce([stored()]);
+    await expect(run()).rejects.toThrow(new UsersError(INVITATION_FAILED));
+    expect(writes()).toHaveLength(0);
+    expect(clerk.invitations.revokeInvitation).not.toHaveBeenCalled();
+    for (const [arg] of clerk.invitations.createInvitation.mock.calls) {
+      expect(arg).toMatchObject({ ignoreExisting: false });
+    }
+  });
+
+  it.each([
+    ["0 rows", () => sqlMock.mockResolvedValueOnce([stored()]).mockResolvedValueOnce([]), CHANGED],
+    [
+      "a throw",
+      () => sqlMock.mockResolvedValueOnce([stored()]).mockRejectedValueOnce(new Error("neon down")),
+      "neon down",
+    ],
+  ])("AC-09: update with %s revokes the new invitation and fails with its own error", async (_, setup, message) => {
+    setup();
+    await expect(run()).rejects.toThrow(message);
+    expect(clerk.invitations.revokeInvitation).toHaveBeenCalledWith("inv_new");
+    expect(writes()).toHaveLength(1);
+  });
+
+  it("AC-10b: compensating revoke 404 counts as done without logging a failure", async () => {
+    sqlMock.mockResolvedValueOnce([stored()]).mockResolvedValueOnce([]);
+    clerk.invitations.revokeInvitation.mockRejectedValueOnce(clerkError(404));
+    await expect(run()).rejects.toThrow(CHANGED);
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it("AC-10c: compensating revoke with another error is logged, does not throw, original error prevails", async () => {
+    sqlMock.mockResolvedValueOnce([stored()]).mockRejectedValueOnce(new Error("neon down"));
+    clerk.invitations.revokeInvitation.mockRejectedValueOnce(clerkError(500));
+    await expect(run()).rejects.toThrow("neon down");
+    expect(console.error).toHaveBeenCalledWith("users.service: compensating revoke failed", expect.anything());
+  });
+
+  it("AC-11: running it twice recovers once; the repeat makes zero Clerk calls and no update", async () => {
+    sqlMock.mockResolvedValueOnce([stored()]).mockResolvedValueOnce([{ id: ROW_ID }]);
+    await run();
+    clerk.users.getUser.mockClear();
+    clerk.invitations.createInvitation.mockClear();
+    sqlMock.mockResolvedValueOnce([stored({ status: "invited", clerk_user_id: null, linked: false, invitation_id: "inv_new" })]);
+
+    await expect(run()).rejects.toThrow(new UsersError(CHANGED));
+    expect(clerk.users.getUser).not.toHaveBeenCalled();
+    expect(clerk.invitations.createInvitation).not.toHaveBeenCalled();
+    expect(writes()).toHaveLength(1);
+  });
+
+  it("AC-13: logs carry no email, name or Clerk id", async () => {
+    sqlMock.mockResolvedValueOnce([stored()]);
+    clerk.invitations.createInvitation.mockRejectedValueOnce(clerkError(422, "form_identifier_exists"));
+    await expect(run()).rejects.toBeInstanceOf(UsersError);
+
+    clerk.users.getUser.mockReset().mockRejectedValue(clerkError(500));
+    sqlMock.mockResolvedValueOnce([stored()]);
+    await expect(run()).rejects.toBeDefined();
+
+    expect(console.error).toHaveBeenCalled();
+    expect(loggedText()).not.toContain(EMAIL);
+    expect(loggedText()).not.toContain(CLERK_ID);
+  });
+
+  it("AC-13: getUser error log keeps only code and status, never the Clerk message", async () => {
+    const leaky = new ClerkAPIResponseError("clerk", {
+      data: [{ code: "internal_error", message: `boom ${EMAIL}`, long_message: `boom ${EMAIL} ${CLERK_ID}` }],
+      status: 500,
+    });
+    clerk.users.getUser.mockReset().mockRejectedValue(leaky);
+    sqlMock.mockResolvedValueOnce([stored()]);
+
+    await expect(run()).rejects.toBe(leaky);
+    const [, payload] = (console.error as unknown as { mock: { calls: [string, Record<string, unknown>][] } }).mock.calls[0];
+    expect(payload).toEqual({ code: "internal_error", message: undefined, step: "clerk-get-user", status: 500 });
+    expect(loggedText()).not.toContain("boom");
+    expect(loggedText()).not.toContain(EMAIL);
+  });
+
+  it("AC-19: invite and resend still call createInvitation with ignoreExisting true", async () => {
+    sqlMock.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: ROW_ID }]);
+    await inviteUser(ADMIN, { email: "n@example.com", role: "user" }, REDIRECT);
+    sqlMock
+      .mockResolvedValueOnce([{ role: "user", status: "invited", invitation_id: "inv_old", email: EMAIL, linked: false }])
+      .mockResolvedValueOnce([{ id: ROW_ID }]);
+    await resendInvitation(ADMIN, { id: ROW_ID }, REDIRECT);
+
+    const calls = clerk.invitations.createInvitation.mock.calls;
+    expect(calls).toHaveLength(2);
+    for (const [arg] of calls) expect(arg).toMatchObject({ ignoreExisting: true });
   });
 });
 

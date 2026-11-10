@@ -5,12 +5,19 @@ import { headers } from "next/headers";
 import type { z } from "zod";
 import { type Actor, getActor } from "@/lib/auth";
 import { can } from "@/lib/roles";
-import { deleteUserInputSchema, editUserInputSchema, idInputSchema, inviteInputSchema } from "../schemas/users.schema";
+import {
+  deleteUserInputSchema,
+  editUserInputSchema,
+  idInputSchema,
+  inviteInputSchema,
+  recoverInputSchema,
+} from "../schemas/users.schema";
 import {
   activateUser,
   countActiveSessions,
   deleteUser,
   inviteUser,
+  recoverUserAccess,
   resendInvitation,
   revokeUser,
   updateUser,
@@ -92,6 +99,13 @@ export async function activateUserAction(input: unknown): Promise<ActionResult> 
 export async function resendInvitationAction(input: unknown): Promise<ActionResult> {
   return mutate("resendInvitationAction", idInputSchema, input, async (actor, data) =>
     resendInvitation(actor, data, await signUpUrl()),
+  );
+}
+
+// RN-04: the client sends only the row id (+ identity checkbox); the Clerk id is resolved on the server.
+export async function recoverUserAccessAction(input: unknown): Promise<ActionResult> {
+  return mutate("recoverUserAccessAction", recoverInputSchema, input, async (actor, data) =>
+    recoverUserAccess(actor, data, await signUpUrl()),
   );
 }
 

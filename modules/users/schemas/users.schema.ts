@@ -41,6 +41,12 @@ export const idInputSchema = z.strictObject({
   id: z.uuid(),
 });
 
+// RN-04, RN-11: id plus the admin identity attestation; the server decides if it is required.
+export const recoverInputSchema = z.strictObject({
+  id: z.uuid(),
+  identityVerified: z.boolean().optional(),
+});
+
 // RN-07: id plus the email the UI saw (confirmation typed by the user).
 export const deleteUserInputSchema = z.strictObject({
   id: z.uuid(),

@@ -36,6 +36,7 @@ import { assignableRoles, rowActions } from "../utils/userPermissions";
 import { DeleteUserDialog } from "./DeleteUserDialog";
 import { EditUserDialog } from "./EditUserDialog";
 import { InviteUserDialog } from "./InviteUserDialog";
+import { RecoverUserDialog } from "./RecoverUserDialog";
 import { displayName, formatLastAccess, StatusBadge, UserDetailSheet } from "./UserDetailSheet";
 
 const BASE_PATH = "/dashboard/users";
@@ -165,6 +166,8 @@ export function UsersView({
   const [revokeOpen, setRevokeOpen] = useState(false);
   const [deleteRow, setDeleteRow] = useState<UserRow | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [recoverRow, setRecoverRow] = useState<UserRow | null>(null);
+  const [recoverOpen, setRecoverOpen] = useState(false);
 
   // A pending search must not navigate back here after leaving the page.
   useEffect(() => () => clearTimeout(searchTimer.current), []);
@@ -361,7 +364,7 @@ export function UsersView({
               {page.rows.map((row) => {
                 const name = displayName(row);
                 const actions = rowActions(actor, row);
-                const hasActions = actions.edit || actions.revoke || actions.activate || actions.resend || actions.remove;
+                const hasActions = actions.edit || actions.revoke || actions.activate || actions.resend || actions.remove || actions.recover;
 
                 return (
                   <TableRow key={row.id} className="hover:bg-accent">
@@ -423,6 +426,16 @@ export function UsersView({
                                   onClick={() => runAction(() => resendInvitationAction({ id: row.id }), "Invitación reenviada.")}
                                 >
                                   Reenviar invitación
+                                </DropdownMenuItem>
+                              ) : null}
+                              {actions.recover ? (
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setRecoverRow(row);
+                                    setRecoverOpen(true);
+                                  }}
+                                >
+                                  Recuperar acceso
                                 </DropdownMenuItem>
                               ) : null}
                               {actions.revoke ? (
@@ -538,6 +551,17 @@ export function UsersView({
         finalFocus={finalFocus}
         onDone={(text) => {
           setRevokeOpen(false);
+          setNotice({ ok: true, text });
+        }}
+      />
+
+      <RecoverUserDialog
+        row={recoverRow}
+        open={recoverOpen}
+        onOpenChange={setRecoverOpen}
+        finalFocus={finalFocus}
+        onDone={(text) => {
+          setRecoverOpen(false);
           setNotice({ ok: true, text });
         }}
       />
