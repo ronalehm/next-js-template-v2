@@ -183,7 +183,19 @@ const humanSigned = (spec, text) =>
 const isValid = (spec, text) => isApproved(text) && lastApproval(spec)?.hash === hash(text) && humanSigned(spec, text);
 
 // A spec with every task of its plan ticked stops unlocking protected files.
-const planOpen = (text) => sectionLines(text, (line) => line.startsWith("## Plan")).some((line) => /- \[ \]/.test(line));
+// Only the "### Fase <id>" subsection of the current phase counts (exact id: "### Fase 1" is not "### Fase 10").
+// Without any "### Fase" the whole "## Plan*" section counts; with some but none matching, nothing is open (missing).
+function planScope(text) {
+  const plan = sectionLines(text, (line) => line.startsWith("## Plan"));
+  const isPhase = (line) => /^###[ \t]+Fase\b/.test(line);
+  if (!plan.some(isPhase)) return { lines: plan, missing: false };
+  const start = plan.findIndex((line) => line.trim() === `### Fase ${phaseId(text)}`);
+  if (start < 0) return { lines: [], missing: true };
+  const body = plan.slice(start + 1);
+  const end = body.findIndex((line) => line.startsWith("### "));
+  return { lines: end < 0 ? body : body.slice(0, end), missing: false };
+}
+const planOpen = (text) => planScope(text).lines.some((line) => /- \[ \]/.test(line));
 
 function digest(path) {
   return createHash("sha256").update(readFileSync(path, "utf8").replace(/\r\n/g, "\n")).digest("hex");
@@ -242,6 +254,7 @@ function authorize(slug) {
   if (!existsSync(resolve(root, spec))) block(`la spec ${spec} no existe.`);
   const text = read(spec);
   if (!isValid(spec, text)) block(`la spec ${spec} necesita antes una aprobación funcional válida ("apruebo ${spec}").`);
+  if (planScope(text).missing) block(`la spec ${spec} no tiene subsección "### Fase ${phaseId(text)}" en su plan: no autoriza nada.`);
   if (!planOpen(text)) block(`la spec ${spec} tiene su plan terminado: ya no autoriza cambios.`);
   const paths = section(text, "Cambios de gobierno");
   if (paths.length === 0) block(`la spec ${spec} no lista rutas en "## Cambios de gobierno".`);
