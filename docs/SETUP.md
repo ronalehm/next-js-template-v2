@@ -284,7 +284,7 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
 - Cada tarea del plan declara los archivos que crea o modifica. Dos tareas se lanzan en paralelo solo si sus archivos son disjuntos y no dependen entre sí.
 - Lo que toca archivos compartidos va primero y en secuencia: instalar dependencias o componentes shadcn, `package.json`, `app/layout.tsx`, `app/providers.tsx`, `lib/`, `components/ui/`, `components/shared/` y los `index.ts` de módulos.
 - Todo developer, en paralelo o no, solo toca sus archivos, verifica con `vitest`/`eslint` sobre ellos (`npx vitest run <archivos>`, `npx eslint <archivos>`) y no ejecuta `npm run build` ni `npx vitest run` sin argumentos (dos builds simultáneos chocan en `.next/`). La verificación integral la ejecuta el reviewer una vez por revisión, según la tabla de su agente.
-- Nadie hace commits; los decide el usuario.
+- Ningún agente ejecuta commit, push ni PR; un humano autorizado los realiza bajo su responsabilidad y el commit lo decide el usuario.
 
 ### Agentes
 
@@ -333,6 +333,93 @@ Usuario → Orquestador → Spec → [aprobación del usuario] → Developer(s) 
 6. **Cierre:** el orquestador marca las tareas hechas en el plan; si quedan fases, se continúan en otra sesión.
 
 Si durante la implementación la spec resulta incompleta o incorrecta, se actualiza la spec primero y luego el código, nunca al revés.
+
+### UAT y cambios solicitados
+
+Fuente única de las reglas UAT para cualquier `<INICIATIVA>`. Cita «Rutas de trabajo», «Autorizaciones» y «Flujo SDD» sin copiarlas. `docs/forms/uat.md` es formato operativo (campos y checklists, no reglas), no gobierno ni instrucción de agente: no se rige por D9 por sí mismo ni exige autorización de gobierno, coherente con las categorías D7/D9 de `docs/specs/template-v2-odd-sdd-optimization.md` (se reclasifica por D7 si llegara a contener reglas). Las sesiones abiertas deben reiniciarse para cargar estos cambios.
+
+**Clasificación segura.** Antes de elegir ruta se verifican todos los requisitos de «Rutas de trabajo» (archivos, módulo/capa, contratos, rutas protegidas, decisiones firmadas, seguridad, permisos, disparadores). Ni el tipo ni el tamaño aparente determinan la ruta ni la autorización; con incertidumbre, detenerse y solicitar evaluación.
+
+| Tipo | Siguiente paso |
+|---|---|
+| BUG, VISUAL, UX, FUNCTIONAL CHANGE, TECHNICAL/CRITICAL | Verificación previa; la ruta sale de ella, no del tipo |
+
+- Una spec cerrada (todas sus casillas marcadas) no autoriza rutas protegidas («Autorizaciones»).
+- Un cambio que contradiga una decisión firmada exige una spec adicional que la referencie y sustituya, sin editar la firmada («Flujo SDD»).
+
+**Pruebas y observaciones.**
+
+- Cada prueba se guía de a una, con ficha de 10 campos de `docs/forms/uat.md`, basada en código, rutas y textos reales; no se inventan botones, rutas ni comportamientos.
+- El usuario comunica libremente; el Orchestrator traduce a una ficha técnica READ-ONLY de 10 campos y recomienda; el usuario no elige ODD/SDD.
+- Decisiones del usuario sobre una observación: incluir en este ciclo, posponer al backlog, rechazar, solicitar reformulación. No usan «apruebo» ni «aprobar»: `apruebo docs/specs/<slug>.md` solo significa aprobación de spec. Una observación no es un cambio autorizado.
+- Una mejora opcional no bloquea el cierre; un defecto crítico de seguridad, permisos, aislamiento o integridad de datos bloquea la aceptación correspondiente.
+- ID al registrar: `<INICIATIVA>-ADJ-nn`; la clasificación es un atributo y no renombra el ID.
+- Tras una corrección se repiten solo las pruebas afectadas y las regresiones necesarias, justificando el alcance. Los ciclos usan el bucle y tope vigentes («Flujo SDD», paso 5).
+
+**Responsabilidades.**
+
+| Rol | Responsabilidad en UAT | No hace |
+|---|---|---|
+| Usuario funcional | Dispone de una copia local preparada; ejecuta instrucciones sencillas; reporta resultados y propone mejoras; acepta o rechaza el comportamiento funcional | Diagnosticar código ni ejecutar correcciones |
+| Orchestrator | Guía un caso por vez; registra observaciones mínimas; clasifica provisionalmente y verifica el procedimiento antes de implementar; coordina asignaciones, autorizaciones y revalidaciones | Escribir código ni archivos (solo casillas) |
+| Equipo interno + Claude Code | Resuelven ajustes menores cuando el gobierno vigente (ruta y autorización) lo autorice | Rodear rutas protegidas ni autorizaciones |
+| Frontend / Backend | Reciben cambios mayores o especializados; el trabajo escalado sigue el flujo SDD con spec y aprobación | (Sin agentes ni hooks nuevos) |
+| Reviewer | Ejecuta las verificaciones técnicas y de regresión que correspondan | Editar archivos |
+
+El campo «responsable/asignado» vive en el registro UAT. Una persona puede ejercer dos capacidades, que pueden coexistir (Producto y Diseño, con las autorizaciones y permisos correspondientes). **Validador funcional:** prueba funcionalidades, reporta y acepta resultados funcionales; no diagnostica código. **Colaborador de código:** conoce programación asistida por IA; puede preparar correcciones menores en una rama independiente y proponer un PR para revisión técnica; no puede autoaprobar su cambio como único revisor. Es una capacidad adicional y explícitamente autorizada de la persona, no del rol de validación.
+
+**Entorno.** El equipo técnico deja la copia local con cuentas, credenciales y datos de prueba aislados. Se verifica una vez al iniciar la ronda y se repite si cambian configuración, credenciales, conexión, roles, sesión o versión del código. Operaciones sensibles o destructivas: controles adicionales, autorización explícita del propietario y solo datos de prueba. No se exigen comandos técnicos al usuario funcional.
+
+**Bloqueos.** Ante FAIL o BLOQUEADO:
+
+1. Registrar el comportamiento observado.
+2. Evaluar si es riesgo crítico (bloqueo crítico, seguridad o integridad): solo entonces análisis inmediato y, si lo exige, se detiene la ronda.
+3. Suspender solo los casos dependientes: pruebas cuyo campo «depende de» nombra la fallida o bloqueada, o que no pueden ejecutarse con seguridad sin su resultado.
+4. Continuar con las pruebas independientes si es seguro.
+5. Asignar la investigación técnica al responsable adecuado.
+
+**Trazabilidad y aceptación.**
+
+- Registro por iniciativa en `docs/evidence/<slug>-uat.md` (documentación informativa, categoría D7), escrito por un `developer` en `Modo: build` en checkpoints (pausa, cierre de ronda, antes de un PR); el Orchestrator no escribe archivos.
+- Cada observación conserva 12 campos y los estados de resultado y de ciclo de vida de `docs/forms/uat.md`; el campo «implementación» anota PR y/o ticket.
+- Las pruebas automatizadas y las manuales se separan: un PASS manual no se concede por resultados automatizados ni por afirmación genérica, e identifica qué validó el usuario.
+- Un BLOQUEADO o FAIL posterior no se sobrescribe con un PASS anterior sin una aclaración registrada.
+- Los lotes agrupan observaciones compatibles sin mezclar rutas de autorización distintas.
+
+**Aceptación UAT ≠ autorización.** La aceptación UAT no equivale a `apruebo docs/specs/<slug>.md` ni a `autorizo gobierno docs/specs/<slug>.md`, ni reutiliza aprobaciones agotadas o vencidas. Se mantienen sin cambios aprobación por fase, autorización de gobierno, firmas SSH, hooks, settings, `Modo: build` sin autorizar rutas protegidas y la separación Orchestrator/Developer/Reviewer. El Orchestrator entrega el comando exacto de aprobación o autorización y de firma, listo para copiar; lo ejecuta quien autoriza, no el usuario funcional durante una prueba.
+
+**UAT-LIGHT (por defecto).** Recorta lecturas, agentes y verbosidad; nunca pruebas ni controles. Formato en `docs/forms/uat.md`.
+
+- 8.1 Instrucciones breves y secuenciales, una prueba por interacción (pantalla, pasos, esperado, recuperación); resultados «prueba · esperado · observado · estado · siguiente acción».
+- 8.2 Registro mínimo y compacto, con checkpoints al pausar, cerrar la ronda o preparar un PR.
+- 8.3 Observaciones por lotes compatibles, sin agentes ni análisis profundo por comentario; la clasificación preliminar es provisional y no habilita ruta ni implementación.
+- 8.4 Análisis de impacto agrupado, una vez al cierre de la ronda, salvo bloqueo crítico, seguridad o integridad (inmediato). La ficha técnica extensa solo cuando haga falta para implementar, escalar o auditar.
+- 8.5 Reutilización: la verificación de código, rutas y textos se hace una vez al iniciar la ronda, por funcionalidad y versión, y se reutiliza en las pruebas relacionadas sin explorar de nuevo el repositorio. El registro anota funcionalidad, rutas y commit verificados (fecha o id de versión si es preliminar). Se repite si cambia el código relevante, el contexto, ante incertidumbre (revalidar por defecto) o si la prueba toca algo no verificado.
+- 8.6 La ruta real, el alcance, las restricciones, el procedimiento y las autorizaciones se verifican antes de implementar; la ruta nunca sale de la etiqueta preliminar.
+- 8.7 Escalado al procedimiento completo solo ante un disparador de riesgo, un cambio que contradiga una decisión firmada, una ruta protegida o de gobierno, o incertidumbre.
+- 8.8 Límite duro: se mantienen los controles obligatorios (Reviewer, autorizaciones, firmas SSH, hooks); revisión y regresión proporcionales al riesgo; no se reducen las pruebas de seguridad, integridad ni aislamiento ni las verificaciones obligatorias del reviewer.
+
+**Gate de inicio de pruebas.** Flujo estándar: Developer → Reviewer técnico → PR listo para UAT → Usuario funcional → Correcciones autorizadas → Revisión y revalidación → Merge. El gate se sitúa entre el APROBADO del reviewer técnico y el merge. Una ronda sobre un PR inicia solo con estas condiciones cumplidas y registradas (bloque «Gate de inicio de ronda» del registro):
+
+1. Existe un PR identificable, con rama y commit exacto.
+2. Las verificaciones técnicas obligatorias previas a UAT están aprobadas (APROBADO del reviewer; no es la aceptación funcional).
+3. El equipo preparó una copia local o entorno de pruebas del commit del PR.
+4. Las cuentas y bases de datos de prueba están aisladas de producción.
+5. El Orchestrator dispone del alcance funcional y de los casos UAT que debe guiar.
+6. El usuario funcional recibe instrucciones sencillas, sin operar Git ni ejecutar procesos técnicos.
+
+- **Durante UAT:** observaciones ligeras; clasificación y asignación por «Clasificación segura» y «Responsabilidades»; se permiten correcciones autorizadas dentro del PR solo si la ruta y la autorización vigentes lo permiten; lo que contradice una decisión firmada o toca rutas protegidas sigue su spec adicional.
+- **Trazabilidad por commit:** con PR, cada resultado lleva el commit exacto probado y su PASS queda ligado a él. Ante un commit nuevo se evalúa el impacto (archivos y áreas tocados, regresiones) y se registra, por cada PASS previo, «afectada → revalidar» o «ajena → PASS vigente» con justificación. Ante duda se revalida; seguridad, integridad, aislamiento y permisos se revalidan siempre que el cambio toque su área. Un PASS con alcance PR sin commit, o sobre un commit nuevo sin evaluación registrada, no es válido. El reporte de ronda indica el commit.
+- **Quién crea qué:** solo el humano autorizado (el propietario o el equipo humano) realiza commits, push y apertura de PR, incluidos los de corrección; el Orchestrator solo exige y registra el commit exacto. Toda corrección autorizada es un commit nuevo, repite la verificación técnica proporcional del reviewer y la revalidación de lo afectado.
+- **Merge:** solo tras cumplir los requisitos técnicos, las autorizaciones y la aceptación funcional aplicables; no se exige aceptación funcional si el gate se declaró «UAT no aplicable». El cierre del orquestador y el APROBADO del reviewer técnico no sustituyen la aceptación funcional.
+- **Conciliaciones:** la condición 2 no se rebaja por UAT-LIGHT (8.8). Las condiciones 3 y 4 siguen la regla de entorno, con «versión del código» = commit del PR.
+- **Excepción preliminar:** antes del PR, en entorno aislado, cuando el equipo prepara expresamente una versión de prueba. Es provisional, se registra y se marca «alcance: preliminar» en registro y reporte, admite fecha o id de versión en lugar del commit, no marca PASS definitivo, no habilita merge y no sustituye el gate del PR cuando sea obligatorio.
+
+**Obligatoriedad y «UAT no aplicable».** La revisión técnica y la UAT funcional son controles distintos: los disparadores de riesgo determinan la ruta y la verificación técnica, no fuerzan una prueba humana. El gate es obligatorio por impacto funcional: el PR modifica comportamiento visible, flujos funcionales, reglas de negocio, permisos, autorización o tratamiento de datos que afecten al usuario. «UAT no aplicable» es un resultado del gate para un PR solo de documentación, instrucciones de agentes, gobierno o herramientas sin impacto funcional visible; exige justificación registrada y las verificaciones técnicas completas (condiciones 1 y 2 y las que la tabla del reviewer exija a su categoría; las condiciones 3 a 6 no aplican) y nunca omite controles técnicos, de seguridad, de aprobación ni de gobierno. Está prohibido declararlo si el PR cambia comportamiento funcional observable, permisos, autorización o autenticación, datos personales o esquema con efecto en el usuario; ante duda, el gate es obligatorio.
+
+**Colaboración por PR.** Desarrollo publica un PR técnicamente preparado y Producto/Diseño ejecuta UAT. Un defecto del PR original se comenta en ese PR y se coordina allí. Una mejora menor independiente puede prepararla Producto/Diseño en su propia rama y PR; si depende de código aún no integrado, el equipo coordina la rama base y evita PR conflictivos contra `main`. Frontend/Backend revisa técnicamente esas contribuciones; Reviewer, CI y aceptación funcional se aplican según corresponda, siempre bajo «Clasificación segura» y con rutas protegidas y decisiones firmadas sujetas a su spec y aprobación. **Linear:** mejoras planificadas, bugs pendientes, cambios de alcance independiente, priorización, responsables y seguimiento. **GitHub:** código, comentarios de revisión, PR, evidencias técnicas y verificaciones. No se crea un ticket por cada observación menor dentro de un PR; se vincula ticket y PR cuando corresponda, sin duplicar registros.
+
+**Colaboradores humanos.** La restricción de commit, push y PR es a agentes, no a personas («Ejecución en paralelo»). La autorización de un colaborador la concede el propietario en los permisos del repositorio remoto, sin registro nuevo en el repo. Se mantienen ramas protegidas, revisión técnica independiente (el autor no es su único revisor), ningún push directo a `main`, gates ODD/SDD, aprobaciones y firmas. Limitación: la aplicación de ramas protegidas depende del servidor Git y la aprobación de specs es por máquina e identidad con un único aprobador; por eso los colaboradores contribuyen solo por rutas que el gobierno ya permite, y toda ruta SDD, protegida o de gobierno sigue exigiendo `apruebo`/`autorizo gobierno` y las firmas del propietario. Multi-aprobador y verificación en servidor son una fase separada, con spec propia.
 
 ### Plantilla de spec
 
