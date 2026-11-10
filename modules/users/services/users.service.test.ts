@@ -7,7 +7,7 @@ const { sqlMock, clerk } = vi.hoisted(() => {
   const sqlMock = Object.assign(vi.fn(), { unsafe: (raw: string) => ({ raw }) });
   const clerk = {
     invitations: { createInvitation: vi.fn(), revokeInvitation: vi.fn() },
-    users: { getUserList: vi.fn(), updateUser: vi.fn() },
+    users: { getUserList: vi.fn(), updateUser: vi.fn(), deleteUser: vi.fn() },
     sessions: { getSessionList: vi.fn() },
   };
   return { sqlMock, clerk };
@@ -25,6 +25,7 @@ import {
   activateUser,
   changeUserRole,
   countActiveSessions,
+  deleteUser,
   getClerkActivity,
   inviteUser,
   listUsers,
@@ -72,7 +73,8 @@ const NAME_INPUT = {
   expectedLastName: "Perez",
 };
 
-const clerkError = (status: number) => new ClerkAPIResponseError("clerk", { data: [], status });
+const clerkError = (status: number, code?: string) =>
+  new ClerkAPIResponseError("clerk", { data: code ? [{ code, message: "m", long_message: "m" }] : [], status });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -92,6 +94,7 @@ describe("permissions", () => {
     ["resendInvitation", () => resendInvitation(USER, { id: ROW_ID }, REDIRECT)],
     ["updateUserName", () => updateUserName(USER, NAME_INPUT)],
     ["updateUser", () => updateUser(USER, { id: ROW_ID, role: "admin", expectedRole: "user" })],
+    ["deleteUser", () => deleteUser(USER, { id: ROW_ID, email: "u@example.com" })],
   ])("%s rejects an actor without users:manage before touching the database or Clerk", async (_, run) => {
     await expect(run()).rejects.toBeInstanceOf(UsersError);
     expect(sqlMock).not.toHaveBeenCalled();
@@ -596,9 +599,18 @@ describe("module source (CA-15, R48)", () => {
       return statSync(path).isDirectory() ? sourceFiles(path) : /\.test\.tsx?$/.test(name) ? [] : [path];
     });
 
-  it("no non-test file deletes rows or Clerk objects", () => {
+  it("delete from, Clerk deleteUser and deleteInvitation live only inside deleteUser of users.service.ts (RN-10)", () => {
+    const service = join(process.cwd(), "modules/users/services/users.service.ts");
     for (const file of sourceFiles(join(process.cwd(), "modules/users"))) {
-      expect(readFileSync(file, "utf8"), file).not.toMatch(/delete from|deleteUser|deleteInvitation/i);
+      let text = readFileSync(file, "utf8");
+      if (file === service) {
+        const start = text.indexOf("export async function deleteUser(");
+        const end = text.indexOf("\n}\n", start);
+        expect(start).toBeGreaterThan(-1);
+        expect(text.slice(start, end)).toMatch(/delete from/);
+        text = text.slice(0, start) + text.slice(end);
+      }
+      expect(text, file).not.toMatch(/delete from|\.deleteUser\(|deleteInvitation/i);
     }
   });
 });
@@ -840,5 +852,182 @@ describe("updateUser (USERS-1b)", () => {
   it("role fails with no name change: its own message, not ROLE_PARTIAL", async () => {
     sqlMock.mockResolvedValueOnce([]);
     await expect(updateUser(SUPER, ROLE_ONLY)).rejects.toThrow(ROLE_FAILED);
+  });
+});
+
+describe("deleteUser (USERS-DELETE)", () => {
+  const EMAIL = "u@example.com";
+  const PARTIAL_DELETE = "La cuenta se eliminó, pero el registro del panel no. Vuelve a intentarlo.";
+  const CHANGED = "El usuario cambió mientras tanto. Recarga la página.";
+  const stored = (overrides: Record<string, unknown> = {}) => ({
+    role: "user",
+    status: "active",
+    invitation_id: null,
+    email: EMAIL,
+    linked: true,
+    clerk_user_id: "user_target",
+    ...overrides,
+  });
+  const invited = () => stored({ status: "invited", invitation_id: "inv_x", linked: false, clerk_user_id: null });
+  const run = (actor: Actor = SUPER) => deleteUser(actor, { id: ROW_ID, email: EMAIL });
+  const deletes = () => sqlCalls().filter((call) => /^delete\b/.test(sqlText(call)));
+
+  it.each([
+    ["active user", stored()],
+    ["admin", stored({ role: "admin" })],
+    ["revoked linked", stored({ status: "revoked" })],
+  ])("%s: Clerk deleteUser first, then one conditional delete with every RN-05 clause", async (_, row) => {
+    sqlMock.mockResolvedValueOnce([row]).mockResolvedValueOnce([{ id: ROW_ID }]);
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(clerk.users.deleteUser).toHaveBeenCalledWith("user_target");
+    expect(clerk.invitations.revokeInvitation).not.toHaveBeenCalled();
+    const del = sqlCalls()[1];
+    expect(sqlText(del)).toBe(
+      "delete from app_users where id = $ and email = $ and role = $ and status = $ and clerk_user_id is not distinct from $ and invitation_id is not distinct from $ and role <> 'superadmin' and id <> $ and clerk_user_id is distinct from $ returning id",
+    );
+    expect(params(del)).toEqual([ROW_ID, EMAIL, row.role, row.status, "user_target", null, ACTOR_ID, "user_actor"]);
+    expect(clerk.users.deleteUser.mock.invocationCallOrder[0]).toBeLessThan(sqlMock.mock.invocationCallOrder[1]);
+    expect(deletes()).toHaveLength(1);
+  });
+
+  it("invited row: revokes the invitation, never users.deleteUser, then deletes", async () => {
+    sqlMock.mockResolvedValueOnce([invited()]).mockResolvedValueOnce([{ id: ROW_ID }]);
+    await run();
+    expect(clerk.invitations.revokeInvitation).toHaveBeenCalledWith("inv_x");
+    expect(clerk.users.deleteUser).not.toHaveBeenCalled();
+    expect(deletes()).toHaveLength(1);
+  });
+
+  it.each([
+    ["revoked without Clerk id", stored({ status: "revoked", clerk_user_id: null, linked: false })],
+    ["invited without invitation", stored({ status: "invited", clerk_user_id: null, linked: false })],
+  ])("%s: only the row is deleted", async (_, row) => {
+    sqlMock.mockResolvedValueOnce([row]).mockResolvedValueOnce([{ id: ROW_ID }]);
+    await run();
+    expect(clerk.users.deleteUser).not.toHaveBeenCalled();
+    expect(clerk.invitations.revokeInvitation).not.toHaveBeenCalled();
+    expect(deletes()).toHaveLength(1);
+  });
+
+  it.each([
+    ["admin actor", ADMIN, ROW_ID, stored()],
+    ["self", SUPER, ACTOR_ID, stored()],
+    ["superadmin target", SUPER, ROW_ID, stored({ role: "superadmin" })],
+  ])("%s: FORBIDDEN before any Clerk call or delete", async (_, actor, id, row) => {
+    sqlMock.mockResolvedValueOnce([row]);
+    await expect(deleteUser(actor, { id, email: EMAIL })).rejects.toThrow(FORBIDDEN);
+    expect(clerk.users.deleteUser).not.toHaveBeenCalled();
+    expect(clerk.invitations.revokeInvitation).not.toHaveBeenCalled();
+    expect(deletes()).toHaveLength(0);
+  });
+
+  it("missing row or email mismatch: CHANGED without Clerk", async () => {
+    sqlMock.mockResolvedValueOnce([]);
+    await expect(run()).rejects.toThrow(CHANGED);
+    sqlMock.mockResolvedValueOnce([stored({ email: "other@example.com" })]);
+    await expect(run()).rejects.toThrow(CHANGED);
+    expect(clerk.users.deleteUser).not.toHaveBeenCalled();
+    expect(deletes()).toHaveLength(0);
+  });
+
+  it("Clerk user 404 counts as done", async () => {
+    sqlMock.mockResolvedValueOnce([stored()]).mockResolvedValueOnce([{ id: ROW_ID }]);
+    clerk.users.deleteUser.mockRejectedValueOnce(clerkError(404));
+    await expect(run()).resolves.toBeUndefined();
+    expect(deletes()).toHaveLength(1);
+  });
+
+  it.each([
+    ["500", clerkError(500)],
+    ["403", clerkError(403)],
+    ["400 with code", clerkError(400, "form_param_invalid")],
+    ["network", new Error("network")],
+  ])("Clerk user %s: stops before Neon, not a UsersError, log without personal data", async (_, error) => {
+    sqlMock.mockResolvedValueOnce([stored()]);
+    clerk.users.deleteUser.mockRejectedValueOnce(error);
+
+    const thrown = await run().catch((e) => e);
+
+    expect(thrown).toBe(error);
+    expect(thrown).not.toBeInstanceOf(UsersError);
+    expect(deletes()).toHaveLength(0);
+    const logged = vi.mocked(console.error).mock.calls[0][1] as Record<string, unknown>;
+    expect(Object.keys(logged).sort()).toEqual(["code", "message", "step"]);
+    expect(logged.step).toBe("clerk-delete-user");
+    expect(JSON.stringify(logged)).not.toContain(EMAIL);
+  });
+
+  it.each([
+    ["404", clerkError(404)],
+    ["400 invitation_already_revoked", clerkError(400, "invitation_already_revoked")],
+  ])("invitation %s counts as done", async (_, error) => {
+    sqlMock.mockResolvedValueOnce([invited()]).mockResolvedValueOnce([{ id: ROW_ID }]);
+    clerk.invitations.revokeInvitation.mockRejectedValueOnce(error);
+    await expect(run()).resolves.toBeUndefined();
+    expect(deletes()).toHaveLength(1);
+  });
+
+  it.each([
+    ["400 other code", clerkError(400, "other_code")],
+    ["400 without code", clerkError(400)],
+    ["already accepted (code unverified)", clerkError(403, "invitation_already_accepted")],
+    ["500", clerkError(500)],
+    ["unknown", new Error("boom")],
+  ])("invitation %s: stops before Neon, not PARTIAL_DELETE", async (_, error) => {
+    sqlMock.mockResolvedValueOnce([invited()]);
+    clerk.invitations.revokeInvitation.mockRejectedValueOnce(error);
+
+    const thrown = await run().catch((e) => e);
+
+    expect(thrown).toBe(error);
+    expect(deletes()).toHaveLength(0);
+    expect(console.error).toHaveBeenCalledWith(
+      "users.service: deleteUser failed",
+      expect.objectContaining({ step: "clerk-revoke-invitation" }),
+    );
+  });
+
+  it("tolerance is scoped to deleteUser: revokeUser still aborts on 400 invitation_already_revoked", async () => {
+    const error = clerkError(400, "invitation_already_revoked");
+    sqlMock.mockResolvedValueOnce([invited()]);
+    clerk.invitations.revokeInvitation.mockRejectedValueOnce(error);
+    await expect(revokeUser(SUPER, { id: ROW_ID })).rejects.toBe(error);
+    expect(writes()).toHaveLength(0);
+  });
+
+  it.each([
+    ["throws", (m: typeof sqlMock) => m.mockRejectedValueOnce(Object.assign(new Error("db down"), { code: "X1" }))],
+    ["returns 0 rows", (m: typeof sqlMock) => m.mockResolvedValueOnce([])],
+  ])("Clerk acted and Neon %s: PARTIAL_DELETE with tagged log, retry succeeds", async (_, neon) => {
+    sqlMock.mockResolvedValueOnce([stored()]);
+    neon(sqlMock);
+
+    await expect(run()).rejects.toThrow(PARTIAL_DELETE);
+    expect(console.error).toHaveBeenCalledWith(
+      "users.service: deleteUser failed",
+      expect.objectContaining({ step: "neon-after-clerk" }),
+    );
+
+    sqlMock.mockResolvedValueOnce([stored()]).mockResolvedValueOnce([{ id: ROW_ID }]);
+    clerk.users.deleteUser.mockRejectedValueOnce(clerkError(404));
+    await expect(run()).resolves.toBeUndefined();
+  });
+
+  it("invited retry after PARTIAL_DELETE: 400 invitation_already_revoked then success", async () => {
+    sqlMock.mockResolvedValueOnce([invited()]).mockResolvedValueOnce([]);
+    await expect(run()).rejects.toThrow(PARTIAL_DELETE);
+
+    sqlMock.mockResolvedValueOnce([invited()]).mockResolvedValueOnce([{ id: ROW_ID }]);
+    clerk.invitations.revokeInvitation.mockRejectedValueOnce(clerkError(400, "invitation_already_revoked"));
+    await expect(run()).resolves.toBeUndefined();
+  });
+
+  it("0 rows without a Clerk call: CHANGED", async () => {
+    sqlMock
+      .mockResolvedValueOnce([stored({ status: "revoked", clerk_user_id: null, linked: false })])
+      .mockResolvedValueOnce([]);
+    await expect(run()).rejects.toThrow(CHANGED);
   });
 });

@@ -8,7 +8,7 @@ const ACTOR_ID = "actor";
 const actions = (actorRole: Role, role: Role, status: UserStatus, linked = status !== "invited", id = "row") =>
   rowActions({ id: ACTOR_ID, role: actorRole }, { id, role, status, linked });
 
-const NONE = { edit: false, revoke: false, activate: false, resend: false };
+const NONE = { edit: false, revoke: false, activate: false, resend: false, remove: false };
 
 describe("assignableRoles", () => {
   it.each([
@@ -49,15 +49,15 @@ describe("rowActions (D37)", () => {
 
   describe("superadmin", () => {
     it.each(["user", "admin"] as const)("edits and revokes an active %s row", (role) => {
-      expect(actions("superadmin", role, "active")).toEqual({ ...NONE, edit: true, revoke: true });
+      expect(actions("superadmin", role, "active")).toEqual({ ...NONE, edit: true, revoke: true, remove: true });
     });
 
     it.each(["user", "admin"] as const)("edits (role only), revokes and resends an invited %s row", (role) => {
-      expect(actions("superadmin", role, "invited")).toEqual({ ...NONE, edit: true, revoke: true, resend: true });
+      expect(actions("superadmin", role, "invited")).toEqual({ ...NONE, edit: true, revoke: true, resend: true, remove: true });
     });
 
     it.each(["user", "admin"] as const)("only activates a revoked linked %s row", (role) => {
-      expect(actions("superadmin", role, "revoked", true)).toEqual({ ...NONE, activate: true });
+      expect(actions("superadmin", role, "revoked", true)).toEqual({ ...NONE, activate: true, remove: true });
     });
 
     it("has no action on a superadmin row", () => {
@@ -74,7 +74,7 @@ describe("rowActions (D37)", () => {
   });
 
   it("never offers Activar for a revoked row that was never linked", () => {
-    expect(actions("superadmin", "user", "revoked", false)).toEqual(NONE);
+    expect(actions("superadmin", "user", "revoked", false)).toEqual({ ...NONE, remove: true });
     expect(actions("admin", "user", "revoked", false)).toEqual(NONE);
   });
 
@@ -91,5 +91,18 @@ describe("rowActions (D37)", () => {
     expect(actions("superadmin", "user", "active").resend).toBe(false);
     expect(actions("superadmin", "user", "revoked", true).resend).toBe(false);
     expect(actions("superadmin", "user", "invited").resend).toBe(true);
+  });
+
+  it("offers remove only to a superadmin on other user/admin rows in any status (RN-01, RN-02)", () => {
+    for (const status of ["active", "invited", "revoked"] as const) {
+      for (const linked of [true, false]) {
+        expect(actions("superadmin", "user", status, linked).remove).toBe(true);
+        expect(actions("superadmin", "admin", status, linked).remove).toBe(true);
+        expect(actions("superadmin", "superadmin", status, linked).remove).toBe(false);
+        expect(actions("superadmin", "user", status, linked, ACTOR_ID).remove).toBe(false);
+        expect(actions("admin", "user", status, linked).remove).toBe(false);
+        expect(actions("user", "user", status, linked).remove).toBe(false);
+      }
+    }
   });
 });

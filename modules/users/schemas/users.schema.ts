@@ -41,6 +41,12 @@ export const idInputSchema = z.strictObject({
   id: z.uuid(),
 });
 
+// RN-07: id plus the email the UI saw (confirmation typed by the user).
+export const deleteUserInputSchema = z.strictObject({
+  id: z.uuid(),
+  email: inviteInputSchema.shape.email,
+});
+
 // USERS-1: no silent truncation; over 50 is rejected (D-U1-6).
 const nameField = z
   .string()

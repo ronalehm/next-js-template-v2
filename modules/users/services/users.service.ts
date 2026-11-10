@@ -58,7 +58,14 @@ type ListedRow = {
   created_at: Date | string;
 };
 
-type StoredRow = { role: Role; status: UserStatus; invitation_id: string | null; email: string; linked: boolean };
+type StoredRow = {
+  role: Role;
+  status: UserStatus;
+  invitation_id: string | null;
+  email: string;
+  linked: boolean;
+  clerk_user_id: string | null;
+};
 
 // Matrix (D37) against the role read from app_users in this request (D11).
 function assertManager(actor: Actor) {
@@ -85,15 +92,17 @@ async function createInvitation(email: string, redirectUrl: string): Promise<str
 }
 
 // R6, E7: a 404 counts as done; any other error aborts before touching the database.
-// ponytail: no documented "already revoked" code found, so only 404 counts (safe side, spec "Diseño técnico").
-async function revokeInvitation(invitationId: string) {
+// Only deleteUser (RN-11) also tolerates 400 `invitation_already_revoked`; other callers keep 404 only.
+async function revokeInvitation(invitationId: string, { tolerateRevoked = false } = {}) {
   const client = await clerkClient();
   try {
     await client.invitations.revokeInvitation(invitationId);
   } catch (error) {
-    if (!(isClerkAPIResponseError(error) && error.status === 404)) {
-      throw error;
-    }
+    const done =
+      isClerkAPIResponseError(error) &&
+      (error.status === 404 ||
+        (tolerateRevoked && error.status === 400 && error.errors[0]?.code === "invitation_already_revoked"));
+    if (!done) throw error;
   }
 }
 
@@ -108,7 +117,7 @@ async function revokeQuietly(invitationId: string) {
 
 async function readRow(id: string): Promise<StoredRow | undefined> {
   const [row] = await getDb()`
-    select role, status, invitation_id, email, clerk_user_id is not null as linked
+    select role, status, invitation_id, email, clerk_user_id is not null as linked, clerk_user_id
     from app_users
     where id = ${id}`;
   return row as StoredRow | undefined;
@@ -398,6 +407,73 @@ export async function revokeUser(actor: Actor, input: IdInput): Promise<void> {
 
   if (updated.length === 0) {
     throw new UsersError(CHANGED);
+  }
+}
+
+const PARTIAL_DELETE = "La cuenta se eliminó, pero el registro del panel no. Vuelve a intentarlo.";
+
+// RN-11: only the listed Clerk errors count as done; anything else is rethrown (generic message) before touching Neon.
+function clerkFailure(step: string, error: unknown) {
+  const clerkError = isClerkAPIResponseError(error) ? error : undefined;
+  logError("deleteUser", { code: clerkError?.errors[0]?.code ?? (error as { code?: unknown })?.code, message: (error as Error)?.message }, { step });
+}
+
+// USERS-DELETE: Clerk first (irreversible, so every permission check comes before), then one conditional delete in Neon.
+// LAST_SUPERADMIN is not needed: the target is never a superadmin, so the active superadmin count cannot drop.
+// Profile and custom fields go by `on delete cascade`. TOCTOU between readRow and Clerk is accepted (RN-12).
+export async function deleteUser(actor: Actor, input: { id: string; email: string }): Promise<void> {
+  assertManager(actor);
+
+  const row = await readRow(input.id);
+  if (!row || row.email !== input.email) throw new UsersError(CHANGED);
+  if (!rowActions(actor, { id: input.id, ...row }).remove) throw new UsersError(FORBIDDEN);
+
+  let clerkActed = false;
+  if (row.clerk_user_id) {
+    try {
+      const client = await clerkClient();
+      await client.users.deleteUser(row.clerk_user_id);
+    } catch (error) {
+      if (!(isClerkAPIResponseError(error) && error.status === 404)) {
+        clerkFailure("clerk-delete-user", error);
+        throw error;
+      }
+    }
+    clerkActed = true;
+  } else if (row.status === "invited" && row.invitation_id) {
+    try {
+      await revokeInvitation(row.invitation_id, { tolerateRevoked: true });
+    } catch (error) {
+      clerkFailure("clerk-revoke-invitation", error);
+      throw error;
+    }
+    clerkActed = true;
+  }
+
+  let deleted: unknown[] = [];
+  try {
+    deleted = await getDb()`
+      delete from app_users
+      where id = ${input.id}
+        and email = ${row.email}
+        and role = ${row.role}
+        and status = ${row.status}
+        and clerk_user_id is not distinct from ${row.clerk_user_id}
+        and invitation_id is not distinct from ${row.invitation_id}
+        and role <> 'superadmin'
+        and id <> ${actor.id}
+        and clerk_user_id is distinct from ${actor.clerkUserId}
+      returning id`;
+  } catch (error) {
+    if (!clerkActed) throw error;
+    logError("deleteUser", error, { step: "neon-after-clerk" });
+    throw new UsersError(PARTIAL_DELETE);
+  }
+
+  if (deleted.length === 0) {
+    if (!clerkActed) throw new UsersError(CHANGED);
+    logError("deleteUser", undefined, { step: "neon-after-clerk" });
+    throw new UsersError(PARTIAL_DELETE);
   }
 }
 

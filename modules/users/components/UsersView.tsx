@@ -33,6 +33,7 @@ import { activateUserAction, resendInvitationAction, revokeUserAction } from "..
 import { usersQuerySchema } from "../schemas/users.schema";
 import type { ActionResult, ClerkActivity, SortKey, UserRow, UsersPage, UsersQuery } from "../types/users.types";
 import { assignableRoles, rowActions } from "../utils/userPermissions";
+import { DeleteUserDialog } from "./DeleteUserDialog";
 import { EditUserDialog } from "./EditUserDialog";
 import { InviteUserDialog } from "./InviteUserDialog";
 import { displayName, formatLastAccess, StatusBadge, UserDetailSheet } from "./UserDetailSheet";
@@ -162,6 +163,8 @@ export function UsersView({
   const [editOpen, setEditOpen] = useState(false);
   const [revokeRow, setRevokeRow] = useState<UserRow | null>(null);
   const [revokeOpen, setRevokeOpen] = useState(false);
+  const [deleteRow, setDeleteRow] = useState<UserRow | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   // A pending search must not navigate back here after leaving the page.
   useEffect(() => () => clearTimeout(searchTimer.current), []);
@@ -358,7 +361,7 @@ export function UsersView({
               {page.rows.map((row) => {
                 const name = displayName(row);
                 const actions = rowActions(actor, row);
-                const hasActions = actions.edit || actions.revoke || actions.activate || actions.resend;
+                const hasActions = actions.edit || actions.revoke || actions.activate || actions.resend || actions.remove;
 
                 return (
                   <TableRow key={row.id} className="hover:bg-accent">
@@ -433,6 +436,20 @@ export function UsersView({
                                     }}
                                   >
                                     Inactivar
+                                  </DropdownMenuItem>
+                                </>
+                              ) : null}
+                              {actions.remove ? (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    variant="destructive"
+                                    onClick={() => {
+                                      setDeleteRow(row);
+                                      setDeleteOpen(true);
+                                    }}
+                                  >
+                                    Eliminar definitivamente
                                   </DropdownMenuItem>
                                 </>
                               ) : null}
@@ -521,6 +538,17 @@ export function UsersView({
         finalFocus={finalFocus}
         onDone={(text) => {
           setRevokeOpen(false);
+          setNotice({ ok: true, text });
+        }}
+      />
+
+      <DeleteUserDialog
+        row={deleteRow}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        finalFocus={finalFocus}
+        onDone={(text) => {
+          setDeleteOpen(false);
           setNotice({ ok: true, text });
         }}
       />
