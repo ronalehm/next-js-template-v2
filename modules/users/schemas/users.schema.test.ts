@@ -7,8 +7,30 @@ import {
   nameInputSchema,
   recoverInputSchema,
   roleInputSchema,
+  userDeletedSchema,
   usersQuerySchema,
 } from "./users.schema";
+
+describe("userDeletedSchema", () => {
+  const valid = { type: "user.deleted", data: { id: "user_2abcDEF123", deleted: true } };
+
+  it("accepts a valid user.deleted payload and ignores extra fields", () => {
+    expect(userDeletedSchema.safeParse(valid).success).toBe(true);
+    expect(userDeletedSchema.parse({ ...valid, object: "event" }).data.id).toBe("user_2abcDEF123");
+  });
+
+  it.each([
+    ["missing id", { type: "user.deleted", data: { deleted: true } }],
+    ["id out of pattern", { type: "user.deleted", data: { id: "org_123", deleted: true } }],
+    ["id with invalid chars", { type: "user.deleted", data: { id: "user_1;drop", deleted: true } }],
+    ["id too long", { type: "user.deleted", data: { id: `user_${"a".repeat(65)}`, deleted: true } }],
+    ["deleted false", { type: "user.deleted", data: { id: "user_1", deleted: false } }],
+    ["deleted missing", { type: "user.deleted", data: { id: "user_1" } }],
+    ["other type", { type: "user.created", data: { id: "user_1", deleted: true } }],
+  ])("rejects %s", (_name, payload) => {
+    expect(userDeletedSchema.safeParse(payload).success).toBe(false);
+  });
+});
 
 const UUID = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
 const DEFAULTS = { q: "", status: "all", role: "all", sort: "name", page: 1 };
