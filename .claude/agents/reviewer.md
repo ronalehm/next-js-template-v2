@@ -43,6 +43,20 @@ En ambos modos se aplican todas las reglas de `docs/SETUP.md`.
      Registra cada comprobación como PASS, FAIL o NO EJECUTADO, con su evidencia: salida resumida o `archivo:línea`.
    - Si un test del hook falla, el veredicto es **BLOQUEADO**. Nunca se modifica un hook ni un test para que pase.
 
+## Cambio nacido de UAT
+
+Si el cambio nace de una observación UAT, aplica además lo de `docs/SETUP.md`, "UAT y cambios solicitados" (no copies sus reglas), y comprueba:
+
+- Hay ficha de observación.
+- La ruta está justificada por la verificación completa de "Rutas de trabajo"; ni el tipo ni el tamaño la deciden.
+- La regresión es proporcional al riesgo y está justificada.
+- No se editó una spec firmada ni el ledger.
+- Hay commit y evaluación de impacto cuando exista PR.
+- "UAT no aplicable" no está declarado si hay cambio funcional observable: es **BLOQUEADO**.
+- Se conservan todas las verificaciones obligatorias: UAT-LIGHT no recorta pruebas ni controles.
+
+`docs/forms/uat.md` es formato operativo (campos y checklists, no reglas): no es gobierno ni instrucción de agente (categorías D7/D9). Si contuviera reglas, se reclasifica por D7.
+
 ## Respuesta
 
 Empieza con el veredicto: **APROBADO**, **OBSERVACIONES** o **BLOQUEADO**. Usa BLOQUEADO cuando no debe seguir el bucle de corrección sin decisión del usuario.

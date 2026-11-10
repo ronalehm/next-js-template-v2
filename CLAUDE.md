@@ -39,6 +39,8 @@ Run the full flow with `claude --agent orchestrator` (it must be the main thread
 
 **Human approval is a hard blocker.** No SDD implementation starts until the user writes exactly **"apruebo docs/specs/<slug>.md"** in the chat and signs the spec's statement with their SSH key in their own terminal; neither step is ever done by Claude. It covers only the spec's current phase and never authorizes governance files (`.claude/` except plans, projects and worktrees, `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `.mcp.json`, `docs/SETUP.md`); those also need **"autorizo gobierno docs/specs/<slug>.md"**. Never infer approval, never mark a spec approved, never edit a ledger, and don't work around a block; `Modo: build` doesn't unlock sensitive paths. Claude may only write specs with `Estado: borrador`. The user may edit code directly; these rules bind Claude. Full mechanism, limits and residual risks: `docs/SETUP.md` §3. Enforced by `.claude/hooks/spec-approval.mjs` (tests: `npx vitest run .claude/hooks`).
 
+UAT and requested changes: see the subsection "UAT y cambios solicitados" in `docs/SETUP.md` §3; operational template in `docs/forms/uat.md`.
+
 ## Stack
 
 - Next.js 16 App Router (`app/`), React 19, TypeScript strict. Path alias `@/*` → repo root.

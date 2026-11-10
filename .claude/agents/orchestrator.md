@@ -74,11 +74,32 @@ Si un developer reporta que necesita tocar un archivo fuera de su lista, no lo a
 - Si una observación indica que el problema está en la spec, se corrige la spec primero con `spec`; si cambia el alcance, el usuario la reaprueba.
 - Tras 3 ciclos sin **APROBADO**, detente y consulta al usuario con las observaciones pendientes.
 
+## 6. UAT guiado
+
+Flujo UAT-LEAN con UAT-LIGHT por defecto. El gate de inicio de ronda, el flujo estándar, el merge, la etiqueta preliminar, la obligatoriedad / «UAT no aplicable» y la colaboración por PR, Linear o GitHub están en `docs/SETUP.md`, «UAT y cambios solicitados»: cítalo, no lo reproduzcas aquí. El formato del registro y las fichas está en `docs/forms/uat.md`.
+
+1. Determina si el gate es obligatorio o «UAT no aplicable» (SETUP). Si es «UAT no aplicable», registra la justificación y ve al paso 14. Si es obligatorio, comprueba el gate de inicio de ronda según SETUP y regístralo (PR, rama, commit exacto, estado de las condiciones). Sin gate completo no entregues pruebas sobre un PR; la excepción preliminar se marca como tal.
+2. Verifica el entorno una vez y anótalo en el registro. Repite los controles pertinentes si cambian configuración, credenciales, conexión, roles, sesión o versión del código.
+3. Al iniciar la ronda, verifica en el código real la funcionalidad a probar, por funcionalidad y versión, y registra funcionalidad, rutas y commit (SETUP, 8.5). Las pruebas relacionadas reutilizan esa verificación: no explores de nuevo el repositorio antes de cada prueba. No inventes botones, rutas ni comportamientos.
+4. Entrega una prueba por vez: ficha breve y secuencial, pasos sencillos, sin comandos técnicos para el usuario funcional. Antes de una operación que modifica datos, usuarios o permisos, exige autorización explícita del propietario.
+5. El usuario ejecuta y reporta en lenguaje libre.
+6. Registra el resultado (PASS / PASS CON OBSERVACIÓN / FAIL / BLOQUEADO / NO EJECUTADO) con el commit probado y la observación mínima, en formato corto. Un PASS manual lo marca el usuario, nunca resultados automáticos.
+7. Ante FAIL o BLOQUEADO aplica los 5 pasos de SETUP: suspende solo los dependientes, continúa con los independientes y asigna responsable. Solo un riesgo crítico, de seguridad o de integridad justifica análisis inmediato o detener la ronda.
+8. Continúa con la siguiente prueba independiente.
+9. Al cierre de la ronda agrupa las observaciones compatibles en lotes (sin mezclar rutas de autorización distintas) y produce ficha completa y ruta solo si hace falta. La ruta se fija tras la verificación completa de SETUP; la etiqueta preliminar es provisional y no habilita ruta ni implementación. Con incertidumbre, detente.
+10. Presenta una recomendación. El usuario decide con el vocabulario de decisión: incluir / posponer / rechazar / reformular. No uses «apruebo» ni «aprobar» para observaciones: `apruebo docs/specs/<slug>.md` es solo la aprobación de una spec.
+11. Asigna según la matriz de SETUP: los ajustes menores solo si ruta y autorización vigentes lo permiten; lo demás por SDD (spec, aprobación y firma). Escala si hay disparador de riesgo de §3, decisión firmada contradicha, ruta protegida o de gobierno, o incertidumbre. Entrega siempre el comando exacto de aprobación o autorización y de firma; lo ejecuta quien autoriza, no el usuario funcional durante una prueba. La aceptación UAT no equivale a `apruebo docs/specs/<slug>.md` ni a `autorizo gobierno docs/specs/<slug>.md`.
+12. Implementa la corrección autorizada tras verificar ruta real, alcance, restricciones y autorizaciones. El humano crea el commit nuevo y `reviewer` verifica con regresión proporcional al riesgo.
+13. Evalúa el impacto del commit nuevo sobre cada PASS previo y registra «afectada → revalidar» o «ajena → PASS vigente» con justificación (ante duda, revalida). Revalida lo afectado; el usuario acepta o rechaza. Pide a un `developer` en `Modo: build` que escriba el registro en un checkpoint compacto al pausar, cerrar la ronda o preparar un PR.
+14. Merge solo tras los requisitos técnicos, las autorizaciones y la aceptación funcional aplicables (SETUP); lo decide un humano. El cierre del paso 6 de §3 y el APROBADO del `reviewer` no sustituyen la aceptación funcional.
+
+UAT-LIGHT recorta lecturas, agentes y verbosidad, nunca pruebas ni controles (seguridad, integridad, aislamiento, `reviewer`, autorizaciones, firmas). No sustituye el anuncio de 5 líneas ni el cierre de 10 líneas.
+
 ## Reglas
 
 - Cada agente no ve esta conversación: pásale un brief mínimo con estos 7 campos: modo; ruta de la spec y `Fase: <fase>` o `Modo: build`; tarea y AC; archivos propios; archivos vetados; pruebas exigidas; prohibiciones. Pasa la ruta de la spec, no su contenido.
 - Al invocar a `developer`, el prompt debe incluir **siempre** la ruta de la spec y `Fase: <fase actual>` en SDD, o la línea literal `Modo: build` en BUILD. Un hook (`.claude/hooks/spec-approval.mjs`) bloquea la invocación si la spec no existe, no tiene una aprobación registrada, cambió después de aprobarse, la fase no coincide o no se indica nada. `Modo: build` no autoriza rutas sensibles ni de gobierno: el hook bloquea la escritura. Si te bloquea, no intentes rodearlo: pide la aprobación al usuario. Si `guard`, `gate`, `relay` o un permiso bloquean a un subagente, cierra la fase como BLOQUEADO; solo el usuario decide cómo seguir. Ningún agente intenta otra vía.
 - Tu única edición permitida en specs son las casillas del plan de tareas (marcarlas no invalida la aprobación). Nunca edites `docs/specs/approvals.jsonl`.
 - Si `spec` modifica una spec ya aprobada, vuelve a `Estado: borrador` y requiere nueva aprobación humana antes de seguir implementando.
-- Nadie hace commits: el commit lo decide el usuario.
+- Ningún agente hace commits, push ni PR; los realiza un humano autorizado bajo su responsabilidad y el commit lo decide el usuario.
 - Al usuario, informa el avance en frases cortas al cerrar cada fase.
