@@ -11,7 +11,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ROLE_LABELS } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import { getUserSessionsAction } from "../actions/users.actions";
-import type { ClerkActivity, UserRow, UserStatus } from "../types/users.types";
+import type { ClerkActivity, IdentityState, UserRow, UserStatus } from "../types/users.types";
+import { IdentityBadge } from "./IdentityBadge";
 
 // Shared by the users components (the module's file list is closed, so they live here).
 
@@ -86,7 +87,17 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 }
 
 // Mounted on each open (the popup unmounts when closed), so the sessions are asked for every time (R41).
-function DetailBody({ row, lastSignInAt, imageUrl }: { row: UserRow; lastSignInAt: number | null; imageUrl: string | null }) {
+function DetailBody({
+  row,
+  lastSignInAt,
+  imageUrl,
+  identity,
+}: {
+  row: UserRow;
+  lastSignInAt: number | null;
+  imageUrl: string | null;
+  identity: IdentityState | null;
+}) {
   const [sessions, setSessions] = useState<{ count: number | null } | null>(null);
   const name = displayName(row);
 
@@ -120,6 +131,11 @@ function DetailBody({ row, lastSignInAt, imageUrl }: { row: UserRow; lastSignInA
           <span className="truncate">{row.email}</span>
         </InfoRow>
         <InfoRow label="Rol">{ROLE_LABELS[row.role]}</InfoRow>
+        {identity ? (
+          <InfoRow label="Identidad">
+            <IdentityBadge state={identity} detail />
+          </InfoRow>
+        ) : null}
       </Group>
       <p className="-mt-4 text-xs text-muted-foreground">
         Por seguridad, solo {row.firstName || name} puede cambiar su correo o su contraseña desde su perfil.
@@ -142,6 +158,7 @@ export function UserDetailSheet({
   onOpenChange,
   row,
   activity,
+  identity,
   canEdit,
   onEdit,
   finalFocus,
@@ -150,6 +167,8 @@ export function UserDetailSheet({
   onOpenChange: (open: boolean) => void;
   row: UserRow | null;
   activity: ClerkActivity[string] | undefined;
+  // null when the actor cannot see identity for this row (RN-08): no «Identidad» row.
+  identity: IdentityState | null;
   canEdit: boolean;
   onEdit: () => void;
   finalFocus: () => HTMLElement | null;
@@ -169,7 +188,12 @@ export function UserDetailSheet({
         </SheetHeader>
 
         {row ? (
-          <DetailBody row={row} lastSignInAt={activity?.lastSignInAt ?? null} imageUrl={activity?.imageUrl ?? null} />
+          <DetailBody
+            row={row}
+            lastSignInAt={activity?.lastSignInAt ?? null}
+            imageUrl={activity?.imageUrl ?? null}
+            identity={identity}
+          />
         ) : null}
 
         <SheetFooter className="flex-row justify-end border-t px-5 py-3">
