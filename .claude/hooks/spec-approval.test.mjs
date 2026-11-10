@@ -925,3 +925,290 @@ test("agent limits: settings hooks enforce them by agent_type", () => {
   assert.equal(shell("developer", "Bash", "npx vitest run"), 0);
   assert.equal(shell(undefined, "Bash", "wc -l docs/specs/approvals.jsonl"), 0);
 });
+
+// governance-sdd-reliability, Fase A: fases de varias palabras, firma legada y gobierno por fase.
+
+const statementOf = (p, name = "g") =>
+  spawnSync("node", [HOOK, "statement", `docs/specs/${name}.md`], { input: "{}", env: p.env, encoding: "utf8" }).stdout;
+const approveUnsigned = (p, name = "g") =>
+  p.run("record", { prompt: `apruebo docs/specs/${name}.md`, unsigned: true, session_id: SESSION });
+const signText = (p, text, name = "g") => writeFileSync(join(p.dir, `docs/specs/${name}.md.sig`), sign(KEY, text));
+// What was signed before the full phase existed: first token of "Fase 1".
+const legacyOf = (text) => text.replace(/\nFase 1\n$/, "\nFase\n");
+const withLine = (text, index, value) => text.split("\n").map((line, i) => (i === index ? value : line)).join("\n");
+const hmac = (p, fields) =>
+  createHmac("sha256", readFileSync(join(p.dir, "key"), "utf8").trim()).update(fields.join("\n")).digest("hex");
+const lastEntry = (file) => JSON.parse(readFileSync(file, "utf8").trim().split("\n").at(-1));
+// Rewrites the last ledger entry as an old approval would have stored it ("Fase"), with a valid HMAC.
+function legacyLedger(p) {
+  const e = { ...lastEntry(p.ledger), phase: "Fase" };
+  e.sig = hmac(p, ["functional", resolve(p.dir), e.spec, e.hash, e.phase, e.approver, e.date]);
+  writeFileSync(p.ledger, `${JSON.stringify(e)}\n`);
+}
+
+test("phases with spaces: statement and ledger keep the full value and the message names the id (AC-01, AC-06)", () => {
+  const p = project();
+  governed(p, "g", { phase: "Fase 1" });
+  governed(p, "b", { phase: "B" });
+  const lines = statementOf(p).split("\n");
+  assert.equal(lines[4], "Fase 1");
+  assert.equal(lines.length, 6, "header, root, spec, hash, phase and the final newline");
+  assert.equal(statementOf(p, "b").split("\n")[4], "B");
+
+  const r = approve(p);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /indica "Fase: 1" en el prompt/);
+  assert.equal(lastEntry(p.ledger).phase, "Fase 1");
+});
+
+test("phases: an empty or missing Fase actual requires no declaration (AC-05)", () => {
+  const p = project();
+  governed(p, "e", { phase: "" });
+  p.spec("n");
+  assert.equal(statementOf(p, "e").split("\n")[4], "");
+  assert.doesNotMatch(approve(p, "e").out, /indica "Fase:/);
+  assert.equal(p.say("apruebo docs/specs/n.md").code, 0);
+  assert.equal(launch(p, "developer", "docs/specs/e.md").code, 0, "empty value");
+  assert.equal(launch(p, "developer", "docs/specs/n.md").code, 0, "no line");
+});
+
+const PHASES = [
+  ["Fase 1", ["Fase: 1", "Fase: Fase 1", "fase: fase 1", "Fase:1", "Fase: 1.", "`Fase: 1`", "**Fase: Fase 1**", '"Fase: 1"', "Fase: 1, otra"], ["Fase 1", "Fase: Fase", "Fase: 10", "Fase: 11", "Fase: 1.1", "Fase: 2", "Fase: Fase 10", "Fase: Fase 1.1", "Fase: 1-2"]],
+  ["Fase 10", ["Fase: 10", "Fase: Fase 10"], ["Fase: 1", "Fase: Fase 1", "Fase: 100"]],
+  ["1", ["Fase: 1", "Fase: Fase 1"], ["Fase: 10", "Fase: 1.1"]],
+  ["1.1", ["Fase: 1.1", "Fase: Fase 1.1"], ["Fase: 1", "Fase: 1.1.1", "Fase: 1x1", "Fase: Fase"]],
+  ["B", ["Fase: B", "Fase: Fase B", "Fase: B."], ["Fase: B.1", "Fase: Fase B.1", "Fase: C"]],
+  ["B.1", ["Fase: B.1", "Fase: B.1.", "`Fase: B.1`"], ["Fase: B", "Fase: B1", "Fase: B.10"]],
+  ["Fase B", ["Fase: B", "Fase: Fase B"], ["Fase: B.1", "Fase: Fase"]],
+];
+
+test("gate: the declaration matches the exact phase id with a boundary (AC-02, AC-03, AC-04)", () => {
+  const p = project();
+  for (const [phase, ok, no] of PHASES) {
+    governed(p, "g", { phase });
+    assert.equal(approve(p).code, 0, phase);
+    for (const d of ok) assert.equal(launch(p, "developer", `docs/specs/g.md ${d}`).code, 0, `${phase} accepts ${d}`);
+    for (const d of no) assert.equal(launch(p, "developer", `docs/specs/g.md ${d}`).code, 2, `${phase} rejects ${d}`);
+    assert.equal(launch(p, "developer", "docs/specs/g.md").code, 2, `${phase} needs a declaration`);
+  }
+  governed(p, "g", { phase: "Fase 1" });
+  approve(p);
+  assert.match(launch(p, "developer", "docs/specs/g.md").out, /debe declarar "Fase: 1"/);
+});
+
+test("phases: several specs in one prompt each need their own declaration (AC-04)", () => {
+  const p = project();
+  governed(p, "a", { phase: "Fase 1" });
+  governed(p, "b", { phase: "Fase 10" });
+  approve(p, "a");
+  approve(p, "b");
+  assert.equal(launch(p, "developer", "docs/specs/a.md Fase: 1, docs/specs/b.md Fase: Fase 10").code, 0);
+  assert.equal(launch(p, "developer", "docs/specs/a.md docs/specs/b.md Fase: 10").code, 2, "a is not covered by 10");
+  assert.equal(launch(p, "developer", "docs/specs/a.md docs/specs/b.md Fase: 1").code, 2, "b is not covered by 1");
+});
+
+test("legacy signature: a Fase 1 spec signed with the first token keeps working for that exact content (AC-07)", () => {
+  const p = project();
+  governed(p, "g", { phase: "Fase 1", sensitive: ["proxy.ts"], governance: ["CLAUDE.md"] });
+  approveUnsigned(p);
+  const text = statementOf(p);
+  assert.match(text, /\nFase 1\n$/);
+  assert.notEqual(legacyOf(text), text);
+
+  signText(p, legacyOf(text));
+  assert.equal(launch(p, "developer", "docs/specs/g.md Fase: 1").code, 0, "legacy signature, no re-signing");
+  assert.equal(write(p, "proxy.ts").code, 0, "sensitive file listed");
+  assert.equal(write(p, "CLAUDE.md").code, 2, "functional approval still does not authorize governance");
+
+  legacyLedger(p);
+  assert.equal(lastEntry(p.ledger).phase, "Fase");
+  assert.equal(launch(p, "developer", "docs/specs/g.md Fase: 1").code, 0, "ledger entry stored with Fase");
+  assert.equal(write(p, "proxy.ts").code, 0);
+});
+
+test("legacy signature: any other statement fails (AC-08)", () => {
+  const p = project();
+  governed(p, "g", { phase: "Fase 1", sensitive: ["proxy.ts"] });
+  approveUnsigned(p);
+  const text = statementOf(p);
+  const fails = (label, signed) => {
+    signText(p, signed);
+    assert.equal(launch(p, "developer", "docs/specs/g.md Fase: 1").code, 2, `${label}: gate`);
+    assert.equal(write(p, "proxy.ts").code, 2, `${label}: sensitive`);
+  };
+
+  signText(p, legacyOf(text));
+  assert.equal(launch(p, "developer", "docs/specs/g.md Fase: 1").code, 0, "control: the legacy statement is valid");
+  fails("other spec", legacyOf(text).replace("docs/specs/g.md", "docs/specs/other.md"));
+  fails("other root", withLine(legacyOf(text), 1, `${text.split("\n")[1]}x`));
+  fails("other hash", withLine(legacyOf(text), 3, "0".repeat(64)));
+  for (const phase of ["Fase 2", "1", "Fase 10", "fase", "Fase 1 ", ""]) {
+    fails(`phase "${phase}"`, withLine(text, 4, phase));
+  }
+
+  // Legacy signature of the content before an edit.
+  signText(p, legacyOf(text));
+  p.write("g", p.file("g") + "- requisito nuevo\n");
+  approveUnsigned(p);
+  assert.equal(launch(p, "developer", "docs/specs/g.md Fase: 1").code, 2, "content changed after signing");
+  assert.equal(write(p, "proxy.ts").code, 2);
+
+  // Legacy signature after the phase changes.
+  governed(p, "g", { phase: "Fase 1", sensitive: ["proxy.ts"] });
+  approveUnsigned(p);
+  signText(p, legacyOf(statementOf(p)));
+  p.write("g", p.file("g").replace("Fase actual: Fase 1", "Fase actual: Fase 2"));
+  assert.equal(launch(p, "developer", "docs/specs/g.md Fase: 2").code, 2, "Fase actual changed after signing");
+  assert.equal(write(p, "proxy.ts").code, 2);
+});
+
+test("governance: a Fase 1 authorization stores the full phase; old entries with Fase and their .gov.sig still validate (AC-09)", () => {
+  const p = project();
+  governed(p, "g", { phase: "Fase 1", governance: ["CLAUDE.md"] });
+  approve(p);
+  const file = join(p.dir, "privileged.jsonl");
+  const govSig = join(p.dir, "docs/specs/g.md.gov.sig");
+  const requestText = () =>
+    spawnSync("node", [HOOK, "statement", "docs/specs/g.md", "gobierno", SESSION], { input: "{}", env: p.env, encoding: "utf8" }).stdout;
+
+  const unsigned = p.run("record", { prompt: "autorizo gobierno docs/specs/g.md", session_id: SESSION, unsigned: true });
+  assert.equal(unsigned.code, 0, unsigned.out);
+  assert.equal(lastEntry(file).phase, "Fase 1");
+  assert.match(unsigned.out, /fase "Fase 1"/);
+  assert.match(requestText(), /\nfase: Fase 1\n/);
+  assert.equal(write(p, "CLAUDE.md").code, 2, "unsigned request unlocks nothing");
+
+  writeFileSync(govSig, sign(KEY, requestText()));
+  assert.equal(write(p, "CLAUDE.md").code, 0, "signed request");
+
+  // The same request as an old hook stored it.
+  const e = { ...lastEntry(file), phase: "Fase" };
+  e.sig = hmac(p, ["privileged", resolve(p.dir), e.spec, e.hash, e.phase, String(e.paths), e.operation, e.session, e.expires, e.approver, e.date]);
+  writeFileSync(file, `${JSON.stringify(e)}\n`);
+  assert.match(requestText(), /\nfase: Fase\n/);
+  writeFileSync(govSig, sign(KEY, requestText().replace("fase: Fase\n", "fase: Fase 1\n")));
+  assert.equal(write(p, "CLAUDE.md").code, 2, "a .gov.sig for another phase value");
+  writeFileSync(govSig, sign(KEY, requestText()));
+  assert.equal(write(p, "CLAUDE.md").code, 0, "old entry with its own .gov.sig");
+});
+
+test("external confirmation: Fase 1 without a valid signature unlocks nothing, and signatures do not cross types (AC-10)", () => {
+  const p = project();
+  governed(p, "g", { phase: "Fase 1", sensitive: ["proxy.ts"], governance: ["CLAUDE.md"] });
+  approveUnsigned(p);
+  const sig = join(p.dir, "docs/specs/g.md.sig");
+  const govSig = join(p.dir, "docs/specs/g.md.gov.sig");
+  const codes = () => [launch(p, "developer", "docs/specs/g.md Fase: 1").code, write(p, "proxy.ts").code, write(p, "CLAUDE.md").code, authorize(p).code];
+
+  assert.deepEqual(codes(), [2, 2, 2, 2], "no .sig");
+  writeFileSync(sig, "not a signature");
+  assert.deepEqual(codes(), [2, 2, 2, 2], "invalid .sig");
+
+  signText(p, statementOf(p));
+  assert.deepEqual(codes().slice(0, 3), [0, 0, 2], "apruebo does not authorize governance");
+  assert.equal(authorize(p).code, 0);
+  assert.equal(write(p, "CLAUDE.md").code, 0, "apruebo plus autorizo gobierno, both signed");
+
+  const functional = readFileSync(sig);
+  writeFileSync(sig, readFileSync(govSig));
+  assert.equal(launch(p, "developer", "docs/specs/g.md Fase: 1").code, 2, "a .gov.sig is not a functional signature");
+  assert.equal(write(p, "proxy.ts").code, 2);
+  writeFileSync(sig, functional);
+  writeFileSync(govSig, functional);
+  assert.equal(write(p, "CLAUDE.md").code, 2, "a functional signature is not a .gov.sig");
+});
+
+test("never and Modo: build: ledgers and key stay out of reach, build opens nothing (AC-11)", () => {
+  const p = project();
+  governed(p, "g", { phase: "Fase 1", sensitive: ["proxy.ts"], governance: ["CLAUDE.md"] });
+  approve(p);
+  authorize(p);
+  assert.equal(write(p, "CLAUDE.md").code, 0, "control: authorized");
+  for (const rel of ["docs/specs/approvals.jsonl", "spec-privileged.jsonl", "spec-approval.key"]) {
+    assert.equal(write(p, rel).code, 2, `${rel} blocked even with approval and authorization`);
+  }
+
+  const q = project();
+  assert.equal(launch(q, "developer", "Modo: build. Edita proxy.ts y CLAUDE.md").code, 0);
+  assert.equal(write(q, "proxy.ts").code, 2, "build does not open sensitive paths");
+  assert.equal(write(q, "CLAUDE.md").code, 2, "build does not open governance");
+
+  const r = project();
+  governed(r, "g", { phase: "Fase 1", sensitive: ["proxy.ts"], governance: ["CLAUDE.md"] });
+  approve(r);
+  assert.equal(launch(r, "developer", "Modo: build docs/specs/g.md Fase: 1").code, 0);
+  assert.equal(write(r, "CLAUDE.md").code, 2, "approved spec plus build: governance still needs its authorization");
+});
+
+test("hash: content or Fase actual changes end the approval and the authorization; an approval does not cross checkouts (AC-11)", () => {
+  const p = project();
+  governed(p, "g", { phase: "Fase 1", sensitive: ["proxy.ts"], governance: ["CLAUDE.md"] });
+  approve(p);
+  authorize(p);
+  const original = p.file("g");
+  assert.equal(write(p, "proxy.ts").code, 0);
+  assert.equal(write(p, "CLAUDE.md").code, 0);
+
+  p.write("g", original.replace("Fase actual: Fase 1", "Fase actual: Fase 2"));
+  const r = launch(p, "developer", "docs/specs/g.md Fase: 2");
+  assert.equal(r.code, 2);
+  assert.match(r.out, /cambió después de su aprobación/);
+  assert.equal(write(p, "proxy.ts").code, 2, "phase changed");
+  assert.equal(write(p, "CLAUDE.md").code, 2, "phase changed");
+
+  // The signed approval, ledger and key copied to another checkout.
+  p.write("g", original);
+  const other = project();
+  other.write("g", original);
+  copyFileSync(join(p.dir, "docs/specs/g.md.sig"), join(other.dir, "docs/specs/g.md.sig"));
+  writeFileSync(other.ledger, readFileSync(p.ledger, "utf8"));
+  writeFileSync(join(other.dir, "key"), readFileSync(join(p.dir, "key"), "utf8"));
+  assert.equal(launch(p, "developer", "docs/specs/g.md Fase: 1").code, 0, "control: original checkout");
+  assert.equal(launch(other, "developer", "docs/specs/g.md Fase: 1").code, 2, "other checkout");
+  assert.equal(write(other, "proxy.ts").code, 2, "other checkout");
+});
+
+test("gate with Modo: build: characterizes the current behavior for a spec cited by path or by slug (AC-12)", () => {
+  const p = project();
+  governed(p, "g", { phase: "Fase 1", sensitive: ["proxy.ts"] });
+
+  assert.equal(launch(p, "developer", "Modo: build docs/specs/g.md").code, 2, "cited by path, draft");
+  assert.equal(launch(p, "developer", "Modo: build docs/specs/nope.md").code, 2, "cited by path, missing");
+  approveUnsigned(p);
+  assert.equal(launch(p, "developer", "Modo: build docs/specs/g.md Fase: 1").code, 2, "cited by path, no signature");
+
+  signText(p, statementOf(p));
+  assert.equal(launch(p, "developer", "Modo: build docs/specs/g.md").code, 2, "valid, phase not declared");
+  assert.equal(launch(p, "developer", "Modo: build docs/specs/g.md Fase: 10").code, 2, "valid, other phase");
+  assert.equal(launch(p, "developer", "Modo: build docs/specs/g.md Fase: 1").code, 0, "valid, phase declared");
+
+  p.write("g", p.file("g") + "- cambio\n");
+  assert.equal(launch(p, "developer", "Modo: build docs/specs/g.md Fase: 1").code, 2, "cited by path, changed");
+
+  // Cited by slug (no docs/specs route): nothing is validated, whatever the spec state.
+  assert.equal(launch(p, "developer", "Modo: build. Evidencia UAT: spec g").code, 0, "by slug, changed spec");
+  assert.equal(launch(p, "developer", "Modo: build. Evidencia UAT: g.md").code, 0, "by file name");
+  assert.equal(launch(p, "developer", "Modo: build. Evidencia UAT: spec nope").code, 0, "by slug, unknown spec");
+  assert.equal(launch(p, "developer", "Evidencia UAT: spec g").code, 2, "a slug alone is not a spec route nor Modo: build");
+  assert.equal(write(p, "proxy.ts").code, 2, "citing by slug authorizes nothing");
+});
+
+test("sections: '## Gobierno afectado por fase' does not authorize paths (AC-14)", () => {
+  const p = project();
+  p.write(
+    "g",
+    "# g\n\n- Estado: borrador\n- Fase actual: A\n\n" +
+      "## Cambios de gobierno\n\nSolo los de la fase actual.\n\n- `CLAUDE.md`\n\n" +
+      "## Gobierno afectado por fase\n\n| Fase | Archivo | Cambio |\n|---|---|---|\n| A | `CLAUDE.md` | uno |\n| B | `docs/SETUP.md` | dos |\n| B | `AGENTS.md` | tres |\n\n- `.mcp.json`\n\n" +
+      "## Plan de tareas\n\n### Fase A\n- [ ] T1\n\n### Fase B\n- [ ] T2\n",
+  );
+  approve(p);
+  const r = authorize(p);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(lastEntry(join(p.dir, "privileged.jsonl")).paths, ["CLAUDE.md"], "only the listed section is read");
+  assert.doesNotMatch(r.out, /SETUP|AGENTS|mcp/);
+  assert.equal(write(p, "CLAUDE.md").code, 0, "listed in Cambios de gobierno");
+  for (const rel of ["docs/SETUP.md", "AGENTS.md", ".mcp.json"]) {
+    assert.equal(write(p, rel).code, 2, `${rel} is only mentioned under Gobierno afectado por fase`);
+  }
+});

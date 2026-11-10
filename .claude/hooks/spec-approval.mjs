@@ -83,7 +83,12 @@ const read = (spec) => readFileSync(resolve(root, spec), "utf8").replace(/\r\n/g
 const STATE_LINE = /^(\s*-?\s*Estado:[ \t]*).*$/im;
 const STATE_VALUE = /^\s*-?\s*Estado:[ \t]*(aprobado|borrador)[ \t]*$/im;
 const isApproved = (text) => /^\s*-?\s*Estado:\s*aprobado\b/im.test(text);
-const phase = (text) => text.match(/^\s*-?\s*Fase actual:\s*(\S+)/im)?.[1] ?? "";
+// Full value of the "Fase actual" line ("Fase 1", "B.1"); "" when missing or empty.
+const phase = (text) => text.match(/^[ \t]*-?[ \t]*Fase actual:[ \t]*(.*)$/im)?.[1].trim() ?? "";
+// Phase without the optional "Fase " prefix: "Fase 1" -> "1".
+const phaseId = (text) => phase(text).replace(/^Fase\s+/i, "");
+// First token of the phase: what statements signed before the full value existed used ("Fase 1" -> "Fase").
+const legacyPhase = (text) => phase(text).match(/^\S*/)[0];
 // The state value and checkbox ticks change during the flow; any other change invalidates the approval.
 const hash = (text) =>
   createHash("sha256").update(text.replace(STATE_VALUE, "").replace(/- \[x\]/gi, "- [ ]")).digest("hex");
@@ -137,7 +142,7 @@ const lastApproval = (spec) => {
 };
 
 // What the user signs in their own terminal. The state value and ticks are outside the hash, so it can be signed before or after "apruebo".
-const statement = (spec, text) => `spec-approval\n${root}\n${spec}\n${hash(text)}\n${phase(text)}\n`;
+const statement = (spec, text, signedPhase = phase(text)) => `spec-approval\n${root}\n${spec}\n${hash(text)}\n${signedPhase}\n`;
 // What the user signs to grant one privileged authorization. Its own header keeps a functional signature from matching;
 // labelled lines let the user check session, paths and expiry before signing.
 const govStatement = (e) =>
@@ -171,7 +176,9 @@ function sshVerified(sigFile, text) {
     return false;
   }
 }
-const humanSigned = (spec, text) => sshVerified(`${spec}.sig`, statement(spec, text));
+// The legacy statement (first token of the phase) keeps old signatures valid for the exact content that was signed.
+const humanSigned = (spec, text) =>
+  sshVerified(`${spec}.sig`, statement(spec, text)) || sshVerified(`${spec}.sig`, statement(spec, text, legacyPhase(text)));
 
 const isValid = (spec, text) => isApproved(text) && lastApproval(spec)?.hash === hash(text) && humanSigned(spec, text);
 
@@ -223,7 +230,7 @@ function approve(slug) {
     `Spec ${spec} aprobada por ${entry.approver} (${entry.date}); el hook cambió su cabecera a "Estado: aprobado". ` +
       `Continúa ahora con la implementación siguiendo el flujo del orquestador (.claude/agents/orchestrator.md, sección 3 desde el paso 4): ` +
       `lanza el agente developer con la ruta ${spec} solo para la "Fase actual" de la spec` +
-      (entry.phase ? ` (indica "Fase: ${entry.phase}" en el prompt)` : "") +
+      (entry.phase ? ` (indica "Fase: ${phaseId(approved)}" en el prompt)` : "") +
       ` y después el reviewer. No vuelvas a pedir aprobación para esa fase; las demás requieren una nueva. ` +
       `Esta aprobación no autoriza archivos de gobierno.`,
   );
@@ -302,9 +309,11 @@ function gate() {
     const text = read(spec);
     if (isValid(spec, text)) {
       const current = phase(text);
-      const declared = [...prompt.matchAll(/\bFase:\s*(\S+)/gi)].map((m) => m[1].replace(/^[`*"']+|[`*"'.,;:]+$/g, ""));
-      if (current && !declared.includes(current)) {
-        block(`la spec ${spec} solo autoriza la fase ${current}: el prompt debe declarar "Fase: ${current}".`);
+      // Exact id with a boundary: "1" is not "10" nor "1.1"; trailing punctuation, backticks, ** and quotes are tolerated.
+      const id = phaseId(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const declared = new RegExp(`\\bFase:\\s*(?:Fase\\s+)?[\`*"']*${id}(?![\\w-]|\\.\\w)`, "i").test(prompt);
+      if (current && !declared) {
+        block(`la spec ${spec} solo autoriza la fase ${current}: el prompt debe declarar "Fase: ${phaseId(text)}".`);
       }
       continue;
     }
