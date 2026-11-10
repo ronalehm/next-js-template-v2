@@ -10,7 +10,7 @@ export function assignableRoles(actorRole: Role): Role[] {
 export function rowActions(
   actor: { id: string; role: Role },
   row: Pick<UserRow, "id" | "role" | "status" | "linked">,
-): { edit: boolean; revoke: boolean; activate: boolean; resend: boolean; remove: boolean } {
+): { edit: boolean; revoke: boolean; activate: boolean; resend: boolean; remove: boolean; recover: boolean } {
   const manages = actor.id !== row.id && canManageRole(actor.role, row.role);
 
   return {
@@ -21,5 +21,7 @@ export function rowActions(
     resend: manages && row.status === "invited",
     // Hard delete: superadmin only, never itself or another superadmin (RN-01, RN-02).
     remove: actor.role === "superadmin" && manages && row.role !== "superadmin",
+    // Recover access (RN-01): active linked rows, never a superadmin row. Pure: no Clerk lookup (RN-10).
+    recover: manages && row.status === "active" && row.linked && row.role !== "superadmin",
   };
 }

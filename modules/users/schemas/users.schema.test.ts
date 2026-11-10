@@ -5,6 +5,7 @@ import {
   idInputSchema,
   inviteInputSchema,
   nameInputSchema,
+  recoverInputSchema,
   roleInputSchema,
   usersQuerySchema,
 } from "./users.schema";
@@ -138,6 +139,32 @@ describe("roleInputSchema and idInputSchema", () => {
     expect(roleInputSchema.safeParse({ id: UUID, role: "superadmin" }).success).toBe(false);
     expect(roleInputSchema.safeParse({ id: UUID, role: "user", status: "active" }).success).toBe(false);
     expect(idInputSchema.safeParse({ id: UUID, clerkUserId: "user_1" }).success).toBe(false);
+  });
+});
+
+describe("recoverInputSchema", () => {
+  const ok = (payload: object) => recoverInputSchema.safeParse(payload).success;
+
+  it("accepts id alone and identityVerified true or false", () => {
+    expect(recoverInputSchema.parse({ id: UUID })).toEqual({ id: UUID });
+    expect(ok({ id: UUID, identityVerified: true })).toBe(true);
+    expect(ok({ id: UUID, identityVerified: false })).toBe(true);
+  });
+
+  it("rejects a non-uuid or missing id", () => {
+    expect(ok({ id: "row-1" })).toBe(false);
+    expect(ok({ identityVerified: true })).toBe(false);
+  });
+
+  it("rejects a non-boolean identityVerified", () => {
+    expect(ok({ id: UUID, identityVerified: "true" })).toBe(false);
+    expect(ok({ id: UUID, identityVerified: 1 })).toBe(false);
+    expect(ok({ id: UUID, identityVerified: null })).toBe(false);
+  });
+
+  it("rejects extra keys such as clerkUserId or role", () => {
+    expect(ok({ id: UUID, clerkUserId: "user_1" })).toBe(false);
+    expect(ok({ id: UUID, role: "admin" })).toBe(false);
   });
 });
 

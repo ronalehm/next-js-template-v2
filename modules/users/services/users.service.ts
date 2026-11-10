@@ -75,18 +75,23 @@ function assertManager(actor: Actor) {
 }
 
 // D42: code and message only, never emails or personal data.
-function logError(step: string, error: unknown, context: { step?: string } = {}) {
+function logError(step: string, error: unknown, context: { step?: string; status?: number } = {}) {
   const { code, message } = (error ?? {}) as { code?: unknown; message?: unknown };
   console.error(`users.service: ${step} failed`, { code, message, ...context });
 }
 
-async function createInvitation(email: string, redirectUrl: string): Promise<string> {
+// RN-12: invite/resend keep the default (true); recover passes false.
+async function createInvitation(
+  email: string,
+  redirectUrl: string,
+  { ignoreExisting = true }: { ignoreExisting?: boolean } = {},
+): Promise<string> {
   const client = await clerkClient();
   const invitation = await client.invitations.createInvitation({
     emailAddress: email,
     redirectUrl,
     notify: true,
-    ignoreExisting: true,
+    ignoreExisting,
   });
   return invitation.id;
 }
@@ -518,6 +523,82 @@ export async function resendInvitation(actor: Actor, input: IdInput, redirectUrl
       where id = ${input.id}
         and status = 'invited'
         and invitation_id is not distinct from ${row.invitation_id}
+        and role = any(${assignableRoles(actor.role)})
+      returning id`;
+  } catch (error) {
+    await revokeQuietly(invitationId);
+    throw error;
+  }
+
+  if (updated.length === 0) {
+    await revokeQuietly(invitationId);
+    throw new UsersError(CHANGED);
+  }
+}
+
+// RN-03: only this exact Clerk error confirms the account is gone. Any other outcome blocks.
+const CLERK_NOT_FOUND_CODE = "resource_not_found";
+const STILL_EXISTS = "La cuenta todavía existe en el proveedor de acceso. No hay nada que recuperar.";
+const IDENTITY_REQUIRED = "Para recuperar a un administrador debes confirmar que verificaste su identidad.";
+const INVITATION_FAILED =
+  "No se pudo crear la invitación. Si el correo ya tiene una cuenta o invitación pendiente en el proveedor de acceso, resuélvelo allí e inténtalo de nuevo.";
+
+async function clerkUserIsGone(clerkUserId: string): Promise<boolean> {
+  try {
+    const client = await clerkClient();
+    await client.users.getUser(clerkUserId);
+    return false;
+  } catch (error) {
+    if (isClerkAPIResponseError(error) && error.status === 404 && error.errors[0]?.code === CLERK_NOT_FOUND_CODE) {
+      return true;
+    }
+    // Only code and status: Clerk messages may carry identifiers.
+    const clerkError = isClerkAPIResponseError(error) ? error : undefined;
+    logError("recoverUserAccess", { code: clerkError?.errors[0]?.code }, { step: "clerk-get-user", status: clerkError?.status });
+    throw error;
+  }
+}
+
+// SPEC sync-clerk-neon: Neon keeps role and profile; the row goes back to `invited` with a new invitation once Clerk confirms the account is gone.
+// Order (RN-06): validate in Neon, confirm in Clerk, create invitation, one conditional update; a failed update revokes the new invitation.
+export async function recoverUserAccess(
+  actor: Actor,
+  input: { id: string; identityVerified?: boolean },
+  redirectUrl: string,
+): Promise<void> {
+  assertManager(actor);
+
+  const row = await readRow(input.id);
+  if (!row || row.status !== "active" || !row.clerk_user_id) throw new UsersError(CHANGED);
+  if (!rowActions(actor, { id: input.id, ...row }).recover) throw new UsersError(FORBIDDEN);
+  // RN-11: decided by the role read from the row, never by the client.
+  if (row.role === "admin" && (actor.role !== "superadmin" || input.identityVerified !== true)) {
+    throw new UsersError(actor.role === "superadmin" ? IDENTITY_REQUIRED : FORBIDDEN);
+  }
+
+  if (!(await clerkUserIsGone(row.clerk_user_id))) throw new UsersError(STILL_EXISTS);
+
+  let invitationId: string;
+  try {
+    invitationId = await createInvitation(row.email, redirectUrl, { ignoreExisting: false });
+  } catch (error) {
+    logError("recover invitation", error);
+    throw new UsersError(INVITATION_FAILED);
+  }
+
+  let updated: unknown[];
+  try {
+    updated = await getDb()`
+      update app_users
+      set clerk_user_id = null, status = 'invited', invitation_id = ${invitationId}, updated_at = now()
+      where id = ${input.id}
+        and status = 'active'
+        and clerk_user_id = ${row.clerk_user_id}
+        and invitation_id is not distinct from ${row.invitation_id}
+        and role = ${row.role}
+        and email = ${row.email}
+        and id <> ${actor.id}
+        and role <> 'superadmin'
         and role = any(${assignableRoles(actor.role)})
       returning id`;
   } catch (error) {
