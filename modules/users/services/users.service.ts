@@ -5,6 +5,7 @@ import type { Actor } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { can, type Role } from "@/lib/roles";
 import { PANEL_ROLES } from "../schemas/users.schema";
+import { canSeeIdentity } from "../utils/identityStatus";
 import { assignableRoles, rowActions } from "../utils/userPermissions";
 import type {
   ClerkActivity,
@@ -43,7 +44,8 @@ const LAST_SUPERADMIN = `not (role = 'superadmin' and status = 'active'
   and (select count(*) from app_users where role = 'superadmin' and status = 'active') <= 1)`;
 
 // Server-only: rows go to the client, clerkUserIds never do (D38).
-export type UsersListing = { page: UsersPage; clerkUserIds: Record<string, string> };
+// identityRowIds (RN-08): linked rows whose role the actor manages; the only rows whose identity is checked.
+export type UsersListing = { page: UsersPage; clerkUserIds: Record<string, string>; identityRowIds: string[] };
 
 type ListedRow = {
   total: number;
@@ -162,11 +164,15 @@ export async function listUsers(actor: Actor, query: UsersQuery): Promise<UsersL
 
   const total = result[0]?.total ?? 0;
   const clerkUserIds: Record<string, string> = {};
+  const identityRowIds: string[] = [];
   const rows: UserRow[] = [];
 
   for (const row of result) {
     if (row.id === null) continue;
-    if (row.clerk_user_id) clerkUserIds[row.id] = row.clerk_user_id;
+    if (row.clerk_user_id) {
+      clerkUserIds[row.id] = row.clerk_user_id;
+      if (canSeeIdentity(actor.role, row.role)) identityRowIds.push(row.id);
+    }
     rows.push({
       id: row.id,
       email: row.email,
@@ -187,31 +193,116 @@ export async function listUsers(actor: Actor, query: UsersQuery): Promise<UsersL
       pageCount: Math.max(Math.ceil(total / PAGE_SIZE), 1),
     },
     clerkUserIds,
+    identityRowIds,
   };
 }
 
-// D38: display only, one Clerk call per page. Never throws and never writes to the database.
-export async function getClerkActivity(clerkUserIds: Record<string, string>): Promise<ClerkActivity> {
+// RN-03: only this exact Clerk error confirms the account is gone. Any other outcome blocks.
+const CLERK_NOT_FOUND_CODE = "resource_not_found";
+
+// RN-04: the single definition of a real 404, shared by recovery (SYNC-1) and detection (SYNC-2).
+function isClerkNotFound(error: unknown): boolean {
+  return isClerkAPIResponseError(error) && error.status === 404 && error.errors[0]?.code === CLERK_NOT_FOUND_CODE;
+}
+
+// RN-10: one shared deadline for the whole identity check of a page.
+export const CLERK_IDENTITY_BUDGET_MS = 5000;
+const TIMEOUT = Symbol("timeout");
+const noop = () => {};
+
+// RN-06: only code, status and step; Clerk messages may carry identifiers.
+// Non-Clerk errors never contribute their own code (arbitrary value): fixed "unexpected_error".
+const SAFE_CLERK_CODE = /^[a-z0-9_]{1,64}$/;
+function logIdentityFailure(step: "get-user-list" | "get-user", error: unknown) {
+  const clerkError = isClerkAPIResponseError(error) ? error : undefined;
+  const clerkCode = clerkError?.errors[0]?.code;
+  const code = clerkCode && SAFE_CLERK_CODE.test(clerkCode) ? clerkCode : "unexpected_error";
+  console.error(`users.service: ${step} failed`, { code, status: clerkError?.status, step });
+}
+
+function logIdentityTimeout(step: "get-user-list" | "get-user") {
+  console.error(`users.service: ${step} failed`, { code: "timeout", step });
+}
+
+// D38: display only. Never throws and never writes to the database. Read-only against Clerk:
+// 1 getUserList (2 HTTP requests) plus at most one getUser per absent id the actor manages, no retries.
+// Promise.race stops waiting but does not cancel the HTTP calls (the SDK has no signal): late results are discarded.
+export async function getClerkActivity(
+  clerkUserIds: Record<string, string>,
+  identityRowIds: string[] = [],
+): Promise<ClerkActivity> {
   const entries = Object.entries(clerkUserIds);
   if (entries.length === 0) return {};
 
-  try {
-    const client = await clerkClient();
-    const { data } = await client.users.getUserList({ userId: Object.values(clerkUserIds), limit: entries.length });
-    const byClerkId = new Map(data.map((user) => [user.id, user]));
-    const activity: ClerkActivity = {};
+  const verifiable = new Set(identityRowIds);
+  // RN-08: rows the actor cannot manage (and anything unconfirmed) stay unverified with no Clerk data.
+  const activity: ClerkActivity = {};
+  for (const [rowId] of entries) activity[rowId] = { lastSignInAt: null, imageUrl: null, identity: "unverified" };
 
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<typeof TIMEOUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMEOUT), CLERK_IDENTITY_BUDGET_MS);
+  });
+
+  try {
+    const clientP = Promise.resolve().then(() => clerkClient());
+    clientP.catch(noop);
+    const batchP = clientP.then((client) =>
+      client.users.getUserList({ userId: Object.values(clerkUserIds), limit: entries.length }),
+    );
+    batchP.catch(noop);
+
+    let batch: Awaited<typeof batchP>;
+    try {
+      const result = await Promise.race([batchP, deadline]);
+      if (result === TIMEOUT) {
+        logIdentityTimeout("get-user-list");
+        return activity;
+      }
+      batch = result;
+    } catch (error) {
+      logIdentityFailure("get-user-list", error);
+      return activity;
+    }
+
+    const byClerkId = new Map(batch.data.map((user) => [user.id, user]));
+    const absent: [string, string][] = [];
     for (const [rowId, clerkUserId] of entries) {
+      if (!verifiable.has(rowId)) continue;
       const user = byClerkId.get(clerkUserId);
       if (user) {
-        activity[rowId] = { lastSignInAt: user.lastSignInAt ?? null, imageUrl: user.hasImage ? user.imageUrl : null };
+        activity[rowId] = { lastSignInAt: user.lastSignInAt ?? null, imageUrl: user.hasImage ? user.imageUrl : null, identity: "verified" };
+      } else {
+        absent.push([rowId, clerkUserId]);
       }
     }
 
+    let timeoutLogged = false;
+    // Own try/catch: always resolves, so Promise.all below never rejects.
+    const verifyOne = async ([rowId, clerkUserId]: [string, string]) => {
+      try {
+        const userP = clientP.then((client) => client.users.getUser(clerkUserId));
+        userP.catch(noop);
+        const user = await Promise.race([userP, deadline]);
+        if (user === TIMEOUT) {
+          if (!timeoutLogged) logIdentityTimeout("get-user");
+          timeoutLogged = true;
+          return;
+        }
+        activity[rowId] = { lastSignInAt: user.lastSignInAt ?? null, imageUrl: user.hasImage ? user.imageUrl : null, identity: "verified" };
+      } catch (error) {
+        if (isClerkNotFound(error)) {
+          activity[rowId] = { lastSignInAt: null, imageUrl: null, identity: "not_found" };
+        } else {
+          logIdentityFailure("get-user", error);
+        }
+      }
+    };
+    await Promise.all(absent.map(verifyOne));
+
     return activity;
-  } catch (error) {
-    logError("getUserList", error);
-    return {};
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -536,8 +627,6 @@ export async function resendInvitation(actor: Actor, input: IdInput, redirectUrl
   }
 }
 
-// RN-03: only this exact Clerk error confirms the account is gone. Any other outcome blocks.
-const CLERK_NOT_FOUND_CODE = "resource_not_found";
 const STILL_EXISTS = "La cuenta todavía existe en el proveedor de acceso. No hay nada que recuperar.";
 const IDENTITY_REQUIRED = "Para recuperar a un administrador debes confirmar que verificaste su identidad.";
 const INVITATION_FAILED =
@@ -549,9 +638,7 @@ async function clerkUserIsGone(clerkUserId: string): Promise<boolean> {
     await client.users.getUser(clerkUserId);
     return false;
   } catch (error) {
-    if (isClerkAPIResponseError(error) && error.status === 404 && error.errors[0]?.code === CLERK_NOT_FOUND_CODE) {
-      return true;
-    }
+    if (isClerkNotFound(error)) return true;
     // Only code and status: Clerk messages may carry identifiers.
     const clerkError = isClerkAPIResponseError(error) ? error : undefined;
     logError("recoverUserAccess", { code: clerkError?.errors[0]?.code }, { step: "clerk-get-user", status: clerkError?.status });

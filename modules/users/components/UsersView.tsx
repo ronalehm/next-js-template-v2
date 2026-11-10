@@ -32,9 +32,11 @@ import { cn } from "@/lib/utils";
 import { activateUserAction, resendInvitationAction, revokeUserAction } from "../actions/users.actions";
 import { usersQuerySchema } from "../schemas/users.schema";
 import type { ActionResult, ClerkActivity, SortKey, UserRow, UsersPage, UsersQuery } from "../types/users.types";
+import { canSeeIdentity, identityOf } from "../utils/identityStatus";
 import { assignableRoles, rowActions } from "../utils/userPermissions";
 import { DeleteUserDialog } from "./DeleteUserDialog";
 import { EditUserDialog } from "./EditUserDialog";
+import { IdentityBadge } from "./IdentityBadge";
 import { InviteUserDialog } from "./InviteUserDialog";
 import { RecoverUserDialog } from "./RecoverUserDialog";
 import { displayName, formatLastAccess, StatusBadge, UserDetailSheet } from "./UserDetailSheet";
@@ -379,7 +381,12 @@ export function UsersView({
                     </TableCell>
                     <TableCell className="px-4">{ROLE_LABELS[row.role]}</TableCell>
                     <TableCell className="px-4">
-                      <StatusBadge status={row.status} />
+                      <div className="flex flex-col items-start gap-1">
+                        <StatusBadge status={row.status} />
+                        {row.status === "active" && canSeeIdentity(actor.role, row.role) ? (
+                          <IdentityBadge state={identityOf(row, activity[row.id])} />
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell className="px-4 text-muted-foreground">
                       <span suppressHydrationWarning>{formatLastAccess(activity[row.id]?.lastSignInAt)}</span>
@@ -524,6 +531,11 @@ export function UsersView({
         onOpenChange={setDetailOpen}
         row={detailRow}
         activity={detailRow ? activity[detailRow.id] : undefined}
+        identity={
+          detailRow && canSeeIdentity(actor.role, detailRow.role)
+            ? identityOf(detailRow, activity[detailRow.id])
+            : null
+        }
         canEdit={detailRow ? rowActions(actor, detailRow).edit : false}
         onEdit={() => {
           setDetailOpen(false);

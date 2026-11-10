@@ -1,27 +1,29 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClerkAPIResponseError } from "@clerk/nextjs/errors";
 
-const { sqlMock, clerk } = vi.hoisted(() => {
+const { sqlMock, clerk, clerkClientMock } = vi.hoisted(() => {
   const sqlMock = Object.assign(vi.fn(), { unsafe: (raw: string) => ({ raw }) });
   const clerk = {
     invitations: { createInvitation: vi.fn(), revokeInvitation: vi.fn() },
     users: { getUserList: vi.fn(), getUser: vi.fn(), updateUser: vi.fn(), deleteUser: vi.fn() },
     sessions: { getSessionList: vi.fn() },
   };
-  return { sqlMock, clerk };
+  const clerkClientMock = vi.fn(async () => clerk);
+  return { sqlMock, clerk, clerkClientMock };
 });
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({ getDb: () => sqlMock }));
-vi.mock("@clerk/nextjs/server", () => ({ clerkClient: async () => clerk }));
+vi.mock("@clerk/nextjs/server", () => ({ clerkClient: clerkClientMock }));
 
 import type { Actor } from "@/lib/auth";
 import type { Role } from "@/lib/roles";
 import type { SortKey, UsersQuery } from "../types/users.types";
 import { assignableRoles } from "../utils/userPermissions";
 import {
+  CLERK_IDENTITY_BUDGET_MS,
   activateUser,
   changeUserRole,
   countActiveSessions,
@@ -179,6 +181,7 @@ describe("listUsers (CA-47, CA-49)", () => {
     expect(await listUsers(SUPER, query({ page: 4 }))).toEqual({
       page: { rows: [], total: 0, page: 1, pageCount: 1 },
       clerkUserIds: {},
+      identityRowIds: [],
     });
   });
 
@@ -213,8 +216,26 @@ describe("listUsers (CA-47, CA-49)", () => {
       },
     ]);
     expect(listing.clerkUserIds).toEqual({ "row-17": "user_17" });
+    expect(listing.identityRowIds).toEqual(["row-17"]);
     expect(JSON.stringify(listing.page)).not.toContain("user_17");
   });
+
+  it.each([
+    ["admin", ADMIN, ["row-1"]],
+    ["superadmin", SUPER, ["row-1", "row-2"]],
+  ] as [string, Actor, string[]][])(
+    "identityRowIds for %s holds only linked rows whose role it manages",
+    async (_, actor, expected) => {
+      sqlMock.mockResolvedValueOnce([
+        dbRow(1, "c1"),
+        { ...dbRow(2, "c2"), role: "admin" },
+        { ...dbRow(3, "c3"), role: "superadmin" },
+        { ...dbRow(4, null), status: "invited" },
+      ]);
+
+      expect((await listUsers(actor, query())).identityRowIds).toEqual(expected);
+    },
+  );
 });
 
 describe("getClerkActivity (CA-49)", () => {
@@ -232,20 +253,285 @@ describe("getClerkActivity (CA-49)", () => {
       totalCount: 2,
     });
 
-    const activity = await getClerkActivity({ "row-a": "user_a", "row-b": "user_b" });
+    const activity = await getClerkActivity({ "row-a": "user_a", "row-b": "user_b" }, ["row-a", "row-b"]);
 
     expect(clerk.users.getUserList).toHaveBeenCalledTimes(1);
     expect(clerk.users.getUserList).toHaveBeenCalledWith({ userId: ["user_a", "user_b"], limit: 2 });
     expect(activity).toEqual({
-      "row-a": { lastSignInAt: 1000, imageUrl: "https://img/a" },
-      "row-b": { lastSignInAt: null, imageUrl: null },
+      "row-a": { lastSignInAt: 1000, imageUrl: "https://img/a", identity: "verified" },
+      "row-b": { lastSignInAt: null, imageUrl: null, identity: "verified" },
     });
+    expect(clerk.users.getUser).not.toHaveBeenCalled();
     expect(sqlMock).not.toHaveBeenCalled();
   });
 
-  it("returns {} without throwing when Clerk fails", async () => {
+  it("marks linked rows unverified without throwing when Clerk fails", async () => {
     clerk.users.getUserList.mockRejectedValueOnce(new Error("down"));
-    expect(await getClerkActivity({ "row-a": "user_a" })).toEqual({});
+    expect(await getClerkActivity({ "row-a": "user_a" }, ["row-a"])).toEqual({
+      "row-a": { lastSignInAt: null, imageUrl: null, identity: "unverified" },
+    });
+  });
+});
+
+describe("getClerkActivity identity detection (SYNC-2)", () => {
+  const UNVERIFIED = { lastSignInAt: null, imageUrl: null, identity: "unverified" };
+  const VERIFIED_B = { lastSignInAt: 7, imageUrl: "https://img/b", identity: "verified" };
+  const liveUser = (id: string) => ({ id, lastSignInAt: 7, hasImage: true, imageUrl: `https://img/${id.slice(-1)}` });
+  const IDS = { "row-a": "user_a", "row-b": "user_b" };
+  const ROWS = ["row-a", "row-b"];
+  // `getUserList` that returns only user_a, so row-b is absent from the batch.
+  const batchWithA = () => clerk.users.getUserList.mockResolvedValueOnce({ data: [liveUser("user_a")], totalCount: 1 });
+  // Network failure as Clerk builds it: unexpected_error with no status (controlled cast, no any).
+  const networkError = () =>
+    new ClerkAPIResponseError("clerk", {
+      data: [{ code: "unexpected_error", message: "m", long_message: "m" }],
+      status: undefined as unknown as number,
+    });
+  const logged = () => (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+
+  // mockImplementation persists across clearAllMocks: reset so it cannot leak into other suites.
+  beforeEach(() => {
+    clerk.users.getUser.mockReset();
+    clerk.users.getUserList.mockReset();
+  });
+  afterEach(() => {
+    clerk.users.getUser.mockReset();
+    clerk.users.getUserList.mockReset();
+  });
+
+  it("verifies an id absent from the batch when getUser answers 200", async () => {
+    batchWithA();
+    clerk.users.getUser.mockResolvedValueOnce(liveUser("user_b"));
+
+    expect(await getClerkActivity(IDS, ROWS)).toEqual({
+      "row-a": { lastSignInAt: 7, imageUrl: "https://img/a", identity: "verified" },
+      "row-b": VERIFIED_B,
+    });
+    expect(clerk.users.getUser).toHaveBeenCalledWith("user_b");
+  });
+
+  it("concludes not_found only for 404 resource_not_found", async () => {
+    batchWithA();
+    clerk.users.getUser.mockRejectedValueOnce(clerkError(404, "resource_not_found"));
+
+    const activity = await getClerkActivity(IDS, ROWS);
+    expect(activity["row-b"]).toEqual({ lastSignInAt: null, imageUrl: null, identity: "not_found" });
+    expect(logged()).toHaveLength(0);
+  });
+
+  it.each([
+    ["404 without JSON body", () => clerkError(404)],
+    ["404 with another code", () => clerkError(404, "route_not_found")],
+    ["404 that is not a Clerk error", () => Object.assign(new Error("proxy"), { status: 404 })],
+    ["401", () => clerkError(401, "authentication_invalid")],
+    ["403", () => clerkError(403, "authorization_invalid")],
+    ["429", () => clerkError(429, "too_many_requests")],
+    ["500", () => clerkError(500, "internal_server_error")],
+    ["API failure", () => clerkError(400, "form_param_missing")],
+    ["network (unexpected_error, no status)", networkError],
+    ["plain network error", () => new Error("fetch failed")],
+  ])("getUser failing with %s leaves the row unverified, never not_found", async (_, makeError) => {
+    batchWithA();
+    clerk.users.getUser.mockRejectedValueOnce(makeError());
+
+    expect((await getClerkActivity(IDS, ROWS))["row-b"]).toEqual(UNVERIFIED);
+    expect(clerk.users.getUser).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["429", () => clerkError(429, "too_many_requests")],
+    ["500", () => clerkError(500, "internal_server_error")],
+    ["network", networkError],
+  ])("a failed batch (%s) leaves every row unverified without getUser, writes or throwing", async (_, makeError) => {
+    clerk.users.getUserList.mockRejectedValueOnce(makeError());
+
+    expect(await getClerkActivity(IDS, ROWS)).toEqual({ "row-a": UNVERIFIED, "row-b": UNVERIFIED });
+    expect(clerk.users.getUser).not.toHaveBeenCalled();
+    expect(sqlMock).not.toHaveBeenCalled();
+  });
+
+  it("gives each row its own state in a mixed page and does one batch call plus k getUser, no retries", async () => {
+    const ids = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`row-${i}`, `user_${i}`]));
+    clerk.users.getUserList.mockResolvedValueOnce({ data: [liveUser("user_0"), liveUser("user_1")], totalCount: 2 });
+    clerk.users.getUser.mockImplementation(async (id: string) => {
+      if (id === "user_2") return liveUser(id);
+      if (id === "user_3") throw clerkError(404, "resource_not_found");
+      throw clerkError(500, "internal_server_error");
+    });
+
+    const activity = await getClerkActivity(ids, Object.keys(ids));
+
+    expect(clerk.users.getUserList).toHaveBeenCalledTimes(1);
+    expect(clerk.users.getUser).toHaveBeenCalledTimes(6);
+    expect(activity["row-0"].identity).toBe("verified");
+    expect(activity["row-2"].identity).toBe("verified");
+    expect(activity["row-3"].identity).toBe("not_found");
+    expect(activity["row-4"].identity).toBe("unverified");
+    expect(Object.keys(activity)).toHaveLength(8);
+  });
+
+  it("without identityRowIds (default) every row is unverified and getUser is never called", async () => {
+    batchWithA();
+
+    expect(await getClerkActivity(IDS)).toEqual({ "row-a": UNVERIFIED, "row-b": UNVERIFIED });
+    expect(clerk.users.getUser).not.toHaveBeenCalled();
+  });
+
+  it("rows the actor cannot manage: no getUser, unverified, null avatar and last sign-in even if the batch has them", async () => {
+    // row-a present in the batch (not manageable), row-b absent (not manageable), row-c manageable and absent.
+    clerk.users.getUserList.mockResolvedValueOnce({ data: [liveUser("user_a")], totalCount: 1 });
+    clerk.users.getUser.mockRejectedValueOnce(clerkError(404, "resource_not_found"));
+
+    const activity = await getClerkActivity({ ...IDS, "row-c": "user_c" }, ["row-c"]);
+
+    expect(activity["row-a"]).toEqual(UNVERIFIED);
+    expect(activity["row-b"]).toEqual(UNVERIFIED);
+    expect(activity["row-c"].identity).toBe("not_found");
+    expect(clerk.users.getUser).toHaveBeenCalledTimes(1);
+    expect(clerk.users.getUser).toHaveBeenCalledWith("user_c");
+  });
+
+  it("never mutates Clerk or touches the database", async () => {
+    batchWithA();
+    clerk.users.getUser.mockRejectedValueOnce(clerkError(404, "resource_not_found"));
+
+    await getClerkActivity(IDS, ROWS);
+
+    expect(sqlMock).not.toHaveBeenCalled();
+    expect(clerk.invitations.createInvitation).not.toHaveBeenCalled();
+    expect(clerk.invitations.revokeInvitation).not.toHaveBeenCalled();
+    expect(clerk.users.deleteUser).not.toHaveBeenCalled();
+    expect(clerk.users.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("logs only code, status and step, never ids, emails or Clerk messages", async () => {
+    const leaky = (status: number) =>
+      new ClerkAPIResponseError("clerk", {
+        data: [{ code: "boom", message: "user_a ana@example.com", long_message: "user_a ana@example.com" }],
+        status,
+      });
+    clerk.users.getUserList.mockRejectedValueOnce(leaky(500));
+    await getClerkActivity(IDS, ROWS);
+    batchWithA();
+    clerk.users.getUser.mockRejectedValueOnce(leaky(429));
+    await getClerkActivity(IDS, ROWS);
+
+    expect(logged().map(([, detail]) => detail)).toEqual([
+      { code: "boom", status: 500, step: "get-user-list" },
+      { code: "boom", status: 429, step: "get-user" },
+    ]);
+    expect(JSON.stringify(logged())).not.toMatch(/user_a|example\.com/);
+  });
+
+  it("a non-Clerk error with an arbitrary code logs the fixed unexpected_error, never its code or message", async () => {
+    const odd = Object.assign(new Error("user_a"), { code: "ana@example.com" });
+    clerk.users.getUserList.mockRejectedValueOnce(odd);
+    await getClerkActivity(IDS, ROWS);
+
+    expect(logged().map(([, detail]) => detail)).toEqual([
+      { code: "unexpected_error", status: undefined, step: "get-user-list" },
+    ]);
+    expect(JSON.stringify(logged())).not.toMatch(/user_a|example\.com/);
+  });
+
+  describe("time budget (RN-10)", () => {
+    const never = () => new Promise<never>(() => {});
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each([
+      ["getUserList", () => clerk.users.getUserList.mockImplementationOnce(never)],
+      ["clerkClient()", () => clerkClientMock.mockImplementationOnce(never)],
+    ])("a hanging %s resolves all rows unverified at 5000 ms, without getUser and with no timers left", async (_, hang) => {
+      hang();
+      const result = getClerkActivity(IDS, ROWS);
+
+      await vi.advanceTimersByTimeAsync(CLERK_IDENTITY_BUDGET_MS);
+
+      expect(await result).toEqual({ "row-a": UNVERIFIED, "row-b": UNVERIFIED });
+      expect(clerk.users.getUser).not.toHaveBeenCalled();
+      expect(logged()).toEqual([["users.service: get-user-list failed", { code: "timeout", step: "get-user-list" }]]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("a hanging getUser leaves only that row unverified; confirmed rows keep their state", async () => {
+      const ids = { "row-a": "user_a", "row-b": "user_b", "row-c": "user_c", "row-d": "user_d" };
+      clerk.users.getUserList.mockResolvedValueOnce({ data: [liveUser("user_a")], totalCount: 1 });
+      clerk.users.getUser.mockImplementation((id: string) =>
+        id === "user_b" ? Promise.reject(clerkError(404, "resource_not_found")) : never(),
+      );
+      const result = getClerkActivity(ids, Object.keys(ids));
+
+      await vi.advanceTimersByTimeAsync(CLERK_IDENTITY_BUDGET_MS);
+      const activity = await result;
+
+      expect(activity["row-a"].identity).toBe("verified");
+      expect(activity["row-b"].identity).toBe("not_found");
+      expect(activity["row-c"]).toEqual(UNVERIFIED);
+      expect(activity["row-d"]).toEqual(UNVERIFIED);
+      // One timeout log for the step, not one per hanging row.
+      expect(logged()).toEqual([["users.service: get-user failed", { code: "timeout", step: "get-user" }]]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("uses one deadline: a 3000 ms batch plus a hanging getUser resolves at 5000 ms total", async () => {
+      clerk.users.getUserList.mockImplementationOnce(
+        () => new Promise((resolve) => setTimeout(() => resolve({ data: [liveUser("user_a")], totalCount: 1 }), 3000)),
+      );
+      clerk.users.getUser.mockImplementationOnce(never);
+      let done = false;
+      const result = getClerkActivity(IDS, ROWS).then((value) => {
+        done = true;
+        return value;
+      });
+
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      const activity = await result;
+      expect(done).toBe(true);
+      expect(activity["row-a"].identity).toBe("verified");
+      expect(activity["row-b"]).toEqual(UNVERIFIED);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("discards late batch and getUser results (resolve or reject) with no extra calls", async () => {
+      let lateBatch: (value: unknown) => void = () => {};
+      let lateUser: (reason: unknown) => void = () => {};
+      clerk.users.getUserList.mockImplementationOnce(() => new Promise((resolve) => (lateBatch = resolve)));
+      const first = getClerkActivity(IDS, ROWS);
+      await vi.advanceTimersByTimeAsync(CLERK_IDENTITY_BUDGET_MS);
+      const firstResult = await first;
+
+      batchWithA();
+      clerk.users.getUser.mockImplementationOnce(() => new Promise((_, reject) => (lateUser = reject)));
+      const second = getClerkActivity(IDS, ROWS);
+      await vi.advanceTimersByTimeAsync(CLERK_IDENTITY_BUDGET_MS);
+      const secondResult = await second;
+
+      const snapshot = structuredClone([firstResult, secondResult]);
+      lateBatch({ data: [liveUser("user_a")], totalCount: 1 });
+      lateUser(clerkError(404, "resource_not_found"));
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect([firstResult, secondResult]).toEqual(snapshot);
+      expect(secondResult["row-b"]).toEqual(UNVERIFIED);
+      expect(clerk.users.getUserList).toHaveBeenCalledTimes(2);
+      expect(clerk.users.getUser).toHaveBeenCalledTimes(1);
+      expect(sqlMock).not.toHaveBeenCalled();
+    });
+
+    it("leaves no timers on the failed-batch path either", async () => {
+      clerk.users.getUserList.mockRejectedValueOnce(new Error("down"));
+      await getClerkActivity(IDS, ROWS);
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 });
 

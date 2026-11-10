@@ -35,8 +35,13 @@ export type UserRow = {
 
 export type UsersPage = { rows: UserRow[]; total: number; page: number; pageCount: number };
 
-// Keyed by the app_users row id.
-export type ClerkActivity = Record<string, { lastSignInAt: number | null; imageUrl: string | null }>;
+export type IdentityState = "verified" | "not_found" | "unverified" | "unlinked";
+
+// Keyed by the app_users row id. Only linked rows have an entry; `unlinked` is derived from row.linked.
+export type ClerkActivity = Record<
+  string,
+  { lastSignInAt: number | null; imageUrl: string | null; identity: Exclude<IdentityState, "unlinked"> }
+>;
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
