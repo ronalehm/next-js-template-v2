@@ -52,9 +52,10 @@ Se evitó interferencia de procesos Next.js locales al reiniciar el servidor pri
 | AC-21 — migración en PostgreSQL desechable | **PASS reportado en ronda técnica previa:** aplicar `0005` → SKIP en segunda ejecución → down manual transaccional → reaplicar. La salida detallada permanece en el registro de ejecución local; no se incorpora como log versionado aquí |
 | AC-07 — duplicados y concurrencia | **PASS en prueba SQL previa**: primera actualización 1 fila, segundo concurrente 0, replay 0; U-4 confirma además duplicado real desde Clerk DEV |
 | Integración Neon DEV | Migración `0005_app_users_clerk_deleted_user_id.sql` aplicada **solo en development** por autorización previa del propietario. Lectura de solo consulta el 11/11: una fila en `schema_migrations` para `0005`; columna `clerk_deleted_user_id` tipo `text`, nullable; 5 `app_users` tras crear la cuenta de U-4 |
-| Tests y build previos al UAT | Según descripción original del PR: Vitest 854 PASS / 7 skipped preexistentes, TypeScript, lint, hooks y build Webpack PASS; no fueron ejecutados nuevamente por este registro |
+| Tests y build previos al UAT | Según descripción original del PR: Vitest 854 PASS / 7 skipped preexistentes, TypeScript, lint, hooks y build Webpack PASS. Re-ejecutados el 2026-11-11 sobre `ac7996a`: ver fila «Re-verificación independiente» |
 | GitHub Actions del código probado | Workflow CI, run 42899546524, `completed/success` sobre `ac7996ad3d65e166e81c444199faf9272ffbea44` |
-| Build Turbopack limpio | **Pendiente de evidencia** por incidencia local previa con `node_modules`/junction; no se presenta como PASS |
+| Re-verificación independiente (2026-11-11, agente, worktree con `node_modules` propio, sobre `ac7996a`) | `npm run lint` PASS; `npx tsc --noEmit` PASS; `npm run build` (`next build`, Next 16, sin junction) PASS, ruta `/api/webhooks/clerk` en el manifiesto; `npx vitest run` 854 PASS / 7 skipped en la última ejecución. En dos ejecuciones completas previas falló 1 prueba de `modules/users/components/DeleteUserDialog.test.tsx` (ajeno al diff; aislado pasa 3/3; sin análisis de causa), tratada como inestabilidad bajo carga |
+| Build Turbopack limpio | **PASS** (ver fila anterior); sustituye la limitación previa de junction |
 | Gobierno SDD | Especificación y firma sin editar; `docs/specs/approvals.jsonl` sin editar. Este documento es informativo, no sustituye el reviewer ni autorización de merge |
 
 ## Evaluación de impacto del commit documental
@@ -64,7 +65,7 @@ Este registro agrega exclusivamente `docs/evidence/sync-3-webhooks-uat.md`. No m
 ## Cierre / pendientes para autorización humana
 
 - **Funcional:** U-1–U-10 ejecutados con matices de evidencia indicados (U-7 con observación; U-8 y U-9 reportados).
-- **Pendiente técnico/documental:** verificar CI del nuevo commit, revisar diff del PR, obtener evidencia de build Turbopack limpio o declarar formalmente la limitación, y completar verificación/reviewer correspondiente.
+- **Pendiente técnico/documental:** verificar CI del nuevo commit, revisar diff del PR, y completar verificación/reviewer correspondiente.
 - **Seguridad:** no publicar secretos ni headers de firma; no tocar producción. La cuenta descartable vinculada con señal vigente no se recupera ni elimina automáticamente.
 - **Decisión:** este documento **no autoriza merge** a `main`, despliegues ni migraciones a producción. La decisión sigue en manos del propietario conforme a `docs/SETUP.md`.
 
