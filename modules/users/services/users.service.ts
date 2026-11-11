@@ -45,7 +45,13 @@ const LAST_SUPERADMIN = `not (role = 'superadmin' and status = 'active'
 
 // Server-only: rows go to the client, clerkUserIds never do (D38).
 // identityRowIds (RN-08): linked rows whose role the actor manages; the only rows whose identity is checked.
-export type UsersListing = { page: UsersPage; clerkUserIds: Record<string, string>; identityRowIds: string[] };
+// deletedSignalRowIds (SYNC-3 RN-08): subset of identityRowIds whose signed `user.deleted` matches the current clerk_user_id.
+export type UsersListing = {
+  page: UsersPage;
+  clerkUserIds: Record<string, string>;
+  identityRowIds: string[];
+  deletedSignalRowIds: string[];
+};
 
 type ListedRow = {
   total: number;
@@ -57,6 +63,7 @@ type ListedRow = {
   role: Role;
   status: UserStatus;
   clerk_user_id: string | null;
+  clerk_deleted: boolean;
   created_at: Date | string;
 };
 
@@ -140,7 +147,8 @@ export async function listUsers(actor: Actor, query: UsersQuery): Promise<UsersL
   // One statement: filtered total, page clamped to the last valid one, and that page (D35).
   const result = (await sql`
     with filtered as (
-      select id, email, first_name, last_name, role, status, clerk_user_id, created_at
+      select id, email, first_name, last_name, role, status, clerk_user_id, created_at,
+        clerk_deleted_user_id
       from app_users
       where (${query.status} = 'all' or status = ${query.status})
         and (${query.role} = 'all' or role = ${query.role})
@@ -152,7 +160,8 @@ export async function listUsers(actor: Actor, query: UsersQuery): Promise<UsersL
         least(${query.page}::int, greatest(ceil(count(*) / 8.0)::int, 1)) as page
       from filtered
     )
-    select p.total, p.page, f.id, f.email, f.first_name, f.last_name, f.role, f.status, f.clerk_user_id, f.created_at
+    select p.total, p.page, f.id, f.email, f.first_name, f.last_name, f.role, f.status, f.clerk_user_id, f.created_at,
+      (f.clerk_user_id is not null and f.clerk_deleted_user_id = f.clerk_user_id) as clerk_deleted
     from paging p
     left join lateral (
       select filtered.*, row_number() over (order by ${orderBy}, id) as position
@@ -165,13 +174,17 @@ export async function listUsers(actor: Actor, query: UsersQuery): Promise<UsersL
   const total = result[0]?.total ?? 0;
   const clerkUserIds: Record<string, string> = {};
   const identityRowIds: string[] = [];
+  const deletedSignalRowIds: string[] = [];
   const rows: UserRow[] = [];
 
   for (const row of result) {
     if (row.id === null) continue;
     if (row.clerk_user_id) {
       clerkUserIds[row.id] = row.clerk_user_id;
-      if (canSeeIdentity(actor.role, row.role)) identityRowIds.push(row.id);
+      if (canSeeIdentity(actor.role, row.role)) {
+        identityRowIds.push(row.id);
+        if (row.clerk_deleted) deletedSignalRowIds.push(row.id);
+      }
     }
     rows.push({
       id: row.id,
@@ -194,6 +207,7 @@ export async function listUsers(actor: Actor, query: UsersQuery): Promise<UsersL
     },
     clerkUserIds,
     identityRowIds,
+    deletedSignalRowIds,
   };
 }
 
@@ -227,9 +241,26 @@ function logIdentityTimeout(step: "get-user-list" | "get-user") {
 // D38: display only. Never throws and never writes to the database. Read-only against Clerk:
 // 1 getUserList (2 HTTP requests) plus at most one getUser per absent id the actor manages, no retries.
 // Promise.race stops waiting but does not cancel the HTTP calls (the SDK has no signal): late results are discarded.
+// SYNC-3 RN-11: a signed deletion signal only turns `unverified` into `not_found`; a live read (verified/not_found) always wins.
+// Applied to every output of the live check, including the early returns on batch timeout or failure.
 export async function getClerkActivity(
   clerkUserIds: Record<string, string>,
   identityRowIds: string[] = [],
+  deletedSignalRowIds: string[] = [],
+): Promise<ClerkActivity> {
+  const activity = await readClerkActivity(clerkUserIds, identityRowIds);
+  const managed = new Set(identityRowIds);
+  for (const rowId of deletedSignalRowIds) {
+    if (managed.has(rowId) && activity[rowId]?.identity === "unverified") {
+      activity[rowId] = { lastSignInAt: null, imageUrl: null, identity: "not_found" };
+    }
+  }
+  return activity;
+}
+
+async function readClerkActivity(
+  clerkUserIds: Record<string, string>,
+  identityRowIds: string[],
 ): Promise<ClerkActivity> {
   const entries = Object.entries(clerkUserIds);
   if (entries.length === 0) return {};

@@ -13,7 +13,7 @@ export default async function UsersPage({ searchParams }: PageProps<"/dashboard/
 
   const query = usersQuerySchema.parse(await searchParams);
   const listing = await listUsers(actor, query);
-  const activity = await getClerkActivity(listing.clerkUserIds, listing.identityRowIds);
+  const activity = await getClerkActivity(listing.clerkUserIds, listing.identityRowIds, listing.deletedSignalRowIds);
 
   // clerkUserIds stays on the server (D38).
   return (

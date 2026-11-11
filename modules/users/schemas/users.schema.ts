@@ -53,6 +53,12 @@ export const deleteUserInputSchema = z.strictObject({
   email: inviteInputSchema.shape.email,
 });
 
+// SYNC-3 RN-03: minimum payload of a verified Clerk `user.deleted` webhook event.
+export const userDeletedSchema = z.object({
+  type: z.literal("user.deleted"),
+  data: z.object({ id: z.string().regex(/^user_[A-Za-z0-9]{1,64}$/), deleted: z.literal(true) }),
+});
+
 // USERS-1: no silent truncation; over 50 is rejected (D-U1-6).
 const nameField = z
   .string()

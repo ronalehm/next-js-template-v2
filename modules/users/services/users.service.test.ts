@@ -126,6 +126,7 @@ describe("listUsers (CA-47, CA-49)", () => {
     role: "user",
     status: clerkUserId ? "active" : "invited",
     clerk_user_id: clerkUserId,
+    clerk_deleted: false,
     created_at: new Date("2026-11-01T10:00:00Z"),
     position: n,
   });
@@ -175,13 +176,14 @@ describe("listUsers (CA-47, CA-49)", () => {
 
   it("maps the single empty row of a zero total to page 1 without rows", async () => {
     sqlMock.mockResolvedValueOnce([
-      { total: 0, page: 1, id: null, email: null, first_name: null, last_name: null, role: null, status: null, clerk_user_id: null, created_at: null },
+      { total: 0, page: 1, id: null, email: null, first_name: null, last_name: null, role: null, status: null, clerk_user_id: null, clerk_deleted: null, created_at: null },
     ]);
 
     expect(await listUsers(SUPER, query({ page: 4 }))).toEqual({
       page: { rows: [], total: 0, page: 1, pageCount: 1 },
       clerkUserIds: {},
       identityRowIds: [],
+      deletedSignalRowIds: [],
     });
   });
 
@@ -217,6 +219,7 @@ describe("listUsers (CA-47, CA-49)", () => {
     ]);
     expect(listing.clerkUserIds).toEqual({ "row-17": "user_17" });
     expect(listing.identityRowIds).toEqual(["row-17"]);
+    expect(listing.deletedSignalRowIds).toEqual([]);
     expect(JSON.stringify(listing.page)).not.toContain("user_17");
   });
 
@@ -531,6 +534,199 @@ describe("getClerkActivity identity detection (SYNC-2)", () => {
       clerk.users.getUserList.mockRejectedValueOnce(new Error("down"));
       await getClerkActivity(IDS, ROWS);
       expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+});
+
+describe("deletion signal (SYNC-3)", () => {
+  const UNVERIFIED = { lastSignInAt: null, imageUrl: null, identity: "unverified" };
+  const NOT_FOUND = { lastSignInAt: null, imageUrl: null, identity: "not_found" };
+  const liveUser = (id: string) => ({ id, lastSignInAt: 7, hasImage: true, imageUrl: `https://img/${id.slice(-1)}` });
+  const IDS = { "row-a": "user_a", "row-b": "user_b" };
+  const ROWS = ["row-a", "row-b"];
+  const logged = () => (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+
+  beforeEach(() => {
+    clerk.users.getUser.mockReset();
+    clerk.users.getUserList.mockReset();
+  });
+  afterEach(() => {
+    clerk.users.getUser.mockReset();
+    clerk.users.getUserList.mockReset();
+  });
+
+  describe("listUsers (RN-08, AC-17)", () => {
+    const query: UsersQuery = { q: "", status: "all", role: "all", sort: "name", page: 1 };
+    const dbRow = (n: number, role: string, clerkUserId: string | null, clerkDeleted: boolean) => ({
+      total: 4,
+      page: 1,
+      id: `row-${n}`,
+      email: `u${n}@example.com`,
+      first_name: null,
+      last_name: null,
+      role,
+      status: clerkUserId ? "active" : "invited",
+      clerk_user_id: clerkUserId,
+      clerk_deleted: clerkDeleted,
+      created_at: new Date("2026-11-01T10:00:00Z"),
+    });
+
+    it("selects only the boolean expression; the dead id never leaves SQL", async () => {
+      sqlMock.mockResolvedValueOnce([]);
+      await listUsers(SUPER, query);
+
+      const text = sqlText(sqlCalls()[0]);
+      expect(text).toContain("(f.clerk_user_id is not null and f.clerk_deleted_user_id = f.clerk_user_id) as clerk_deleted");
+      expect(text).not.toMatch(/f\.clerk_deleted_user_id,|, f\.clerk_deleted_user_id/);
+    });
+
+    it("superadmin: deletedSignalRowIds holds flagged rows of user and admin, never unflagged, superadmin or unlinked", async () => {
+      sqlMock.mockResolvedValueOnce([
+        dbRow(1, "user", "c1", true),
+        dbRow(2, "admin", "c2", true),
+        dbRow(3, "user", "c3", false),
+        dbRow(4, "superadmin", "c4", true),
+        dbRow(5, "user", null, true),
+      ]);
+
+      const listing = await listUsers(SUPER, query);
+      expect(listing.deletedSignalRowIds).toEqual(["row-1", "row-2"]);
+      expect(listing.deletedSignalRowIds.every((id) => listing.identityRowIds.includes(id))).toBe(true);
+    });
+
+    it("admin: admin and superadmin rows never enter deletedSignalRowIds", async () => {
+      sqlMock.mockResolvedValueOnce([
+        dbRow(1, "user", "c1", true),
+        dbRow(2, "admin", "c2", true),
+        dbRow(3, "superadmin", "c3", true),
+      ]);
+
+      const listing = await listUsers(ADMIN, query);
+      expect(listing.deletedSignalRowIds).toEqual(["row-1"]);
+      expect(JSON.stringify(listing.page)).not.toContain("clerk_deleted");
+    });
+  });
+
+  describe("getClerkActivity merge (RN-11, AC-14)", () => {
+    it("batch ok, getUser 404: not_found (already live) and the signal changes nothing", async () => {
+      clerk.users.getUserList.mockResolvedValueOnce({ data: [liveUser("user_a")], totalCount: 1 });
+      clerk.users.getUser.mockRejectedValueOnce(clerkError(404, "resource_not_found"));
+
+      const activity = await getClerkActivity(IDS, ROWS, ["row-b"]);
+      expect(activity["row-a"].identity).toBe("verified");
+      expect(activity["row-b"]).toEqual(NOT_FOUND);
+    });
+
+    it("batch ok, ambiguous getUser failure (404 without code, 429): signal turns unverified into not_found", async () => {
+      for (const error of [clerkError(404), clerkError(429, "too_many_requests")]) {
+        clerk.users.getUserList.mockResolvedValueOnce({ data: [liveUser("user_a")], totalCount: 1 });
+        clerk.users.getUser.mockRejectedValueOnce(error);
+
+        const activity = await getClerkActivity(IDS, ROWS, ["row-b"]);
+        expect(activity["row-a"].identity).toBe("verified");
+        expect(activity["row-b"]).toEqual(NOT_FOUND);
+      }
+    });
+
+    it("failed batch (429): signalled rows become not_found, the rest stay unverified, no getUser", async () => {
+      clerk.users.getUserList.mockRejectedValueOnce(clerkError(429, "too_many_requests"));
+
+      expect(await getClerkActivity(IDS, ROWS, ["row-a"])).toEqual({ "row-a": NOT_FOUND, "row-b": UNVERIFIED });
+      expect(clerk.users.getUser).not.toHaveBeenCalled();
+    });
+
+    it("failed batch (plain error): signalled rows become not_found and nothing throws", async () => {
+      clerk.users.getUserList.mockRejectedValueOnce(new Error("down"));
+
+      expect(await getClerkActivity(IDS, ROWS, ROWS)).toEqual({ "row-a": NOT_FOUND, "row-b": NOT_FOUND });
+    });
+
+    it("batch timeout: signalled row becomes not_found at 5000 ms and no timers are left", async () => {
+      vi.useFakeTimers();
+      try {
+        clerk.users.getUserList.mockImplementationOnce(() => new Promise<never>(() => {}));
+        const result = getClerkActivity(IDS, ROWS, ["row-b"]);
+
+        await vi.advanceTimersByTimeAsync(CLERK_IDENTITY_BUDGET_MS);
+
+        expect(await result).toEqual({ "row-a": UNVERIFIED, "row-b": NOT_FOUND });
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("getUser timeout: signalled row becomes not_found, unsignalled stays unverified", async () => {
+      vi.useFakeTimers();
+      try {
+        clerk.users.getUserList.mockResolvedValueOnce({ data: [], totalCount: 0 });
+        clerk.users.getUser.mockImplementation(() => new Promise<never>(() => {}));
+        const result = getClerkActivity(IDS, ROWS, ["row-b"]);
+
+        await vi.advanceTimersByTimeAsync(CLERK_IDENTITY_BUDGET_MS);
+
+        expect(await result).toEqual({ "row-a": UNVERIFIED, "row-b": NOT_FOUND });
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("AC-15: a live 200 (batch or getUser) wins over the signal", async () => {
+      clerk.users.getUserList.mockResolvedValueOnce({ data: [liveUser("user_a")], totalCount: 1 });
+      clerk.users.getUser.mockResolvedValueOnce(liveUser("user_b"));
+
+      const activity = await getClerkActivity(IDS, ROWS, ROWS);
+      expect(activity["row-a"]).toEqual({ lastSignInAt: 7, imageUrl: "https://img/a", identity: "verified" });
+      expect(activity["row-b"]).toEqual({ lastSignInAt: 7, imageUrl: "https://img/b", identity: "verified" });
+    });
+
+    it("AC-17: ignores signals for rows outside identityRowIds and for rows with no Clerk link", async () => {
+      clerk.users.getUserList.mockRejectedValueOnce(new Error("down"));
+
+      const activity = await getClerkActivity(IDS, ["row-a"], ["row-a", "row-b", "row-ghost"]);
+      expect(activity).toEqual({ "row-a": NOT_FOUND, "row-b": UNVERIFIED });
+      expect(Object.keys(activity)).toEqual(["row-a", "row-b"]);
+    });
+
+    it("AC-17: a stale signal does not matter when the row is not flagged by listUsers (empty list)", async () => {
+      clerk.users.getUserList.mockRejectedValueOnce(new Error("down"));
+      expect(await getClerkActivity(IDS, ROWS, [])).toEqual({ "row-a": UNVERIFIED, "row-b": UNVERIFIED });
+    });
+
+    it("never logs ids or the signal", async () => {
+      clerk.users.getUserList.mockRejectedValueOnce(clerkError(500, "internal_server_error"));
+      await getClerkActivity(IDS, ROWS, ROWS);
+      expect(JSON.stringify(logged())).not.toMatch(/user_a|user_b|row-/);
+    });
+  });
+
+  describe("AC-16 default", () => {
+    it("without third argument or with [] the result equals the SYNC-2 result", async () => {
+      for (const args of [[ROWS], [ROWS, []]] as [string[], string[]?][]) {
+        clerk.users.getUserList.mockResolvedValueOnce({ data: [liveUser("user_a")], totalCount: 1 });
+        clerk.users.getUser.mockRejectedValueOnce(clerkError(500, "internal_server_error"));
+        expect(await getClerkActivity(IDS, ...args)).toEqual({
+          "row-a": { lastSignInAt: 7, imageUrl: "https://img/a", identity: "verified" },
+          "row-b": UNVERIFIED,
+        });
+      }
+    });
+  });
+
+  describe("AC-19 recoverUserAccess", () => {
+    it("still calls getUser and fails with STILL_EXISTS when Clerk answers 200, regardless of any signal", async () => {
+      sqlMock.mockResolvedValueOnce([
+        { role: "user", status: "active", invitation_id: "inv_old", email: "p@example.com", linked: true, clerk_user_id: "user_dead" },
+      ]);
+      clerk.users.getUser.mockResolvedValueOnce(liveUser("user_dead"));
+
+      await expect(recoverUserAccess(ADMIN, { id: ROW_ID }, REDIRECT)).rejects.toThrow(
+        new UsersError("La cuenta todavía existe en el proveedor de acceso. No hay nada que recuperar."),
+      );
+      expect(clerk.users.getUser).toHaveBeenCalledWith("user_dead");
+      expect(clerk.invitations.createInvitation).not.toHaveBeenCalled();
+      expect(writes()).toHaveLength(0);
     });
   });
 });
