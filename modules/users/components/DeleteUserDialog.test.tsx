@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UserRow } from "../types/users.types";
 
@@ -27,7 +27,8 @@ function setup(overrides: Partial<Parameters<typeof DeleteUserDialog>[0]> = {}) 
 const deleteButton = () => screen.getByRole("button", { name: "Eliminar" });
 const type = (value: string) => fireEvent.change(input(), { target: { value } });
 const isDisabled = (el: HTMLElement) => (el as HTMLButtonElement).disabled || el.hasAttribute("data-disabled") || el.getAttribute("aria-disabled") === "true";
-const flush = () => act(() => new Promise<void>((r) => setTimeout(r, 50)));
+const cancelButton = () => screen.getByRole("button", { name: "Cancelar" });
+const waitIdle = () => waitFor(() => expect(isDisabled(cancelButton())).toBe(false));
 const click = (el: HTMLElement) => fireEvent.click(el);
 const input = () => screen.getByLabelText("Escribe el correo para confirmar");
 
@@ -49,21 +50,24 @@ describe("DeleteUserDialog", () => {
     const props = setup();
     type(ROW.email);
     click(deleteButton());
-    await flush();
-    expect(props.onDone).toHaveBeenCalledWith("Usuario eliminado.");
+    await waitFor(() => expect(props.onDone).toHaveBeenCalledWith("Usuario eliminado."));
+    await waitIdle();
     expect(deleteUserAction).toHaveBeenCalledWith({ id: ROW.id, email: ROW.email });
   });
 
   it("AC-16: disables both buttons while pending", async () => {
     let resolve!: (value: { ok: true }) => void;
     deleteUserAction.mockReturnValue(new Promise((r) => (resolve = r)));
-    setup();
+    const props = setup();
     type(ROW.email);
     click(deleteButton());
-    await flush();
-    expect(isDisabled(deleteButton())).toBe(true);
-    expect(isDisabled(screen.getByRole("button", { name: "Cancelar" }))).toBe(true);
+    await waitFor(() => {
+      expect(isDisabled(deleteButton())).toBe(true);
+      expect(isDisabled(cancelButton())).toBe(true);
+    });
     resolve({ ok: true });
+    await waitFor(() => expect(props.onDone).toHaveBeenCalledWith("Usuario eliminado."));
+    await waitIdle();
   });
 
   it("AC-16: shows the error (PARTIAL_DELETE / CHANGED) in role=alert and stays open", async () => {
@@ -73,6 +77,7 @@ describe("DeleteUserDialog", () => {
     type(ROW.email);
     click(deleteButton());
     expect((await screen.findByRole("alert")).textContent).toBe(message);
+    await waitIdle();
     expect(props.onDone).not.toHaveBeenCalled();
     expect(props.onOpenChange).not.toHaveBeenCalled();
   });
@@ -83,7 +88,8 @@ describe("DeleteUserDialog", () => {
     type(ROW.email);
     click(deleteButton());
     await screen.findByRole("alert");
-    click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitIdle();
+    click(cancelButton());
     expect(props.onOpenChange).toHaveBeenCalledWith(false);
     expect((input() as HTMLInputElement).value).toBe("");
     expect(screen.queryByRole("alert")).toBeNull();
