@@ -78,9 +78,13 @@ No aplica: no cambia ningún permiso ni acceso; las comprobaciones `users:manage
 ## Matriz de pruebas
 | Cambio | Unit | Integración | E2E / manual | Seguridad | Migración / rollback |
 |---|---|---|---|---|---|
-| Logs sin datos personales (services y actions) | Sí: `npx vitest run modules/users/services/users.service.test.ts modules/users/actions/users.actions.test.ts` | No (CI normal del PR) | UAT-1 manual (gate obligatorio, UAT-LIGHT; ver sección UAT) | Negativas por punto de registro: `logError`, `clerkFailure`, `fail` | No: revertir commit |
+| Logs sin datos personales (services y actions) | Sí: `npx vitest run modules/users/services/users.service.test.ts modules/users/actions/users.actions.test.ts` | No (CI normal del PR) | UAT-1 manual parcial, solo `fail` (gate obligatorio, UAT-LIGHT; ver sección UAT). `logError` y `clerkFailure`: sin validación manual | Negativas automatizadas por punto de registro: `logError`, `clerkFailure`, `fail` (AC-01 a AC-04) | No: revertir commit |
 
-Verificación del developer: solo las pruebas dirigidas anteriores y `npx eslint` sobre los 4 archivos. No se exige suite completa ni build. UAT-1 es manual, del propietario (sección «UAT»); no repite UAT de Gestión de Usuarios ni de SYNC.
+Separación manual vs automatizado:
+- `fail` (`inviteUserAction`): validación manual parcial (UAT-1).
+- `logError` y `clerkFailure`: solo pruebas negativas automatizadas ya aprobadas (AC-01, AC-02 y casos de fallback). NO cuentan como validación manual ni como PASS manual.
+
+Verificación del developer: solo las pruebas dirigidas anteriores y `npx eslint` sobre los 4 archivos. No se exige suite completa ni build. UAT-1 es manual y parcial, del propietario (sección «UAT»); no repite UAT de Gestión de Usuarios ni de SYNC.
 
 ## Tests
 - `modules/users/services/users.service.test.ts`:
@@ -108,20 +112,28 @@ Se sustituye solo lo indicado; las specs firmadas no se editan. Textos verificad
 Confirmado contra la lista de SETUP: ninguno de los 4 archivos es ruta sensible ni de gobierno (ningún `auth` en su ruta ni nombre), por eso no hay `## Archivos sensibles` ni `## Cambios de gobierno`.
 
 ## UAT
-Gate: **obligatorio** (UAT-LIGHT, `docs/SETUP.md` «Gate de inicio de pruebas»). El propietario corrigió su decisión anterior: ya NO se declara «UAT no aplicable», porque el cambio toca el tratamiento de datos personales. Una sola validación mínima, con datos sintéticos, sin operaciones destructivas y sin ejecutar nada contra Clerk/Neon de producción. No se repite UAT de Gestión de Usuarios ni de SYNC ni suites completas.
+Gate: **obligatorio** (UAT-LIGHT, `docs/SETUP.md` «Gate de inicio de pruebas»). El propietario corrigió su decisión anterior: ya NO se declara «UAT no aplicable», porque el cambio toca el tratamiento de datos personales. Una sola validación mínima y parcial, con una cuenta sintética existente, sin operaciones destructivas y sin modificar nada en Clerk/Neon. No se repite UAT de Gestión de Usuarios ni de SYNC ni suites completas.
 
-### UAT-1 — Los logs de un fallo controlado no contienen datos personales
+Alcance honesto de la validación manual:
+- Manual (UAT-1): solo `fail` vía `inviteUserAction`.
+- Solo automatizado: `logError` y `clerkFailure`, cubiertos por las pruebas negativas ya aprobadas (AC-01, AC-02 y casos de fallback). No cuentan como validación manual ni como PASS.
+- El criterio original de UAT-1 (un fallo con un dato sintético en el `message` del error) se cubre únicamente por esas pruebas automatizadas. No tiene disparo manual seguro: el reviewer verificó que ningún flujo de la UI actual lo permite sin tocar Clerk/Neon; los `UsersError` son textos fijos y el `message` del SDK de Clerk es `statusText`.
+- Estados permitidos para UAT-1: como máximo PASS PARCIAL (nunca PASS completo, por no cubrir `logError`/`clerkFailure` manualmente). No se declara PASS antes de ejecutar y aceptar.
+
+### UAT-1 — `fail` ante invitación duplicada registra solo `{ code: undefined }` (parcial)
+Razón de seguridad: `inviteUser` (`modules/users/services/users.service.ts`, l.370-374) consulta `app_users` y lanza `UsersError("Ya tiene una invitación pendiente. Usa Reenviar invitación.")` si el estado es `invited`, antes de `createInvitation` (Clerk) y antes de cualquier `insert`. No se escribe nada en Clerk ni en Neon. `fail` (`users.actions.ts`, l.42-45) registra `{ code: safeLogCode(error.code) }`; `UsersError` no aporta `code` válido, así que se espera `undefined`.
+
 | # | Campo | Valor |
 |---|---|---|
-| 1 | ID y objetivo | UAT-1: comprobar en el log del servidor que, ante un fallo controlado con un correo/nombre sintético en el `message` del error, solo aparecen `code`, `step`/`status` |
-| 2 | Pantalla y ruta verificadas | Medio: log (consola) del servidor del entorno de pruebas DEV del commit del PR. Disparo del fallo: a definir y confirmar por el propietario antes de iniciar UAT-1, sobre el código implementado |
-| 3 | Usuario y rol necesarios | Propietario o usuario funcional con acceso al log del servidor DEV; rol con `users:manage` si el disparo pasa por la UI de usuarios |
-| 4 | Estado inicial y datos de prueba | Entorno aislado de producción; correo y nombre sintéticos (p. ej. `uat-logs@example.invalid`, `Nombre Sintetico`); sin usuarios reales |
-| 5 | Pasos humanos | 1) Provocar un fallo controlado cuyo error lleve el dato sintético en su `message` (disparo a definir y confirmar por el propietario antes de iniciar UAT-1, sobre el código implementado). 2) Localizar la línea `users.service: ... failed` o `<action> failed` en el log. 3) Revisar su contenido |
-| 6 | Resultado esperado | La línea contiene solo `code` (o vacío), `step` y/o `status`; no hay clave `message` y el correo/nombre sintético no aparece. El mensaje mostrado al usuario no cambia |
+| 1 | ID y objetivo | UAT-1 (manual, parcial): comprobar que `fail` (acción `inviteUserAction`) ante un error de invitación duplicada registra solo `{ code: undefined }`, sin clave `message` ni datos personales |
+| 2 | Pantalla y ruta verificadas | `/dashboard/users`, diálogo «Invitar usuario»; log del servidor en la terminal de `npm run dev` (DEV, commit exacto del PR #33) |
+| 3 | Usuario y rol necesarios | Propietario o usuario funcional con acceso a la terminal del servidor DEV y rol con `users:manage` |
+| 4 | Estado inicial y datos de prueba | DEV aislado de producción. Una cuenta sintética EXISTENTE en estado `invited` (su correo se toma de la fila). No se crea ninguna invitación nueva. Si no existe una fila `invited` sintética apta en DEV, UAT-1 queda BLOQUEADA y se informa al propietario (no se crea ninguna) |
+| 5 | Pasos humanos | 1) Abrir `/dashboard/users`. 2) Aplicar el filtro de estado «Invitados» y localizar la fila sintética; copiar su correo. 3) Pulsar «Invitar usuario». 4) En el diálogo, escribir ese correo en «Correo», dejar el rol «Usuario» y pulsar «Enviar invitación». 5) Observar el mensaje en pantalla. 6) En la terminal de `npm run dev`, localizar la línea `inviteUserAction failed` y revisar su contenido |
+| 6 | Resultado esperado | En pantalla: «Ya tiene una invitación pendiente. Usa Reenviar invitación.». En el log: una línea `inviteUserAction failed { code: undefined }`, sin clave `message` y sin el correo. La fila sigue `invited`, sin cambios |
 | 7 | Resultado reportado por el usuario | (pendiente) |
-| 8 | Evidencia disponible | Línea del log sin datos sintéticos |
-| 9 | Recuperación | No hay cambio persistente; si el disparo creó datos sintéticos, se eliminan por el flujo normal de la app solo en DEV |
+| 8 | Evidencia disponible | Línea del log `inviteUserAction failed { code: undefined }` y mensaje mostrado en pantalla |
+| 9 | Recuperación | Ninguna: no se crea, modifica ni elimina nada en Clerk/Neon |
 | 10 | Depende de | — |
 
 Registro posterior: `docs/evidence/users-logs-hardening-uat.md`, escrito por un `developer` en `Modo: build` en un checkpoint. Es documentación D7 y no forma parte de los 4 archivos de T1. Gate de inicio de ronda según `docs/forms/uat.md` §5 (PR, rama y commit exacto, aprobación del reviewer, DEV aislado).
@@ -130,10 +142,10 @@ Registro posterior: `docs/evidence/users-logs-hardening-uat.md`, escrito por un 
 1. `SAFE_CLERK_CODE` (`/^[a-z0-9_]{1,64}$/`) se mantiene sin cambios (Opción A). Los SQLSTATE con letras mayúsculas (p. ej. `XX000`) se registran como `undefined`: pérdida de diagnóstico aceptada; los solo numéricos (p. ej. `23505`) se conservan. `logIdentityFailure` no cambia.
 2. UAT Opción B: el propietario corrige su elección anterior; ya NO se declara «UAT no aplicable». Gate obligatorio con UAT-1 (sección «UAT»).
 
-3. Disparo de UAT-1: el propietario decide aprobar la spec ahora. El disparo NO bloquea la aprobación ni la implementación; se define y confirma antes de iniciar UAT-1, a partir del código ya implementado y revisado (propuesta del developer o del reviewer basada en el código real, confirmada por el propietario). No se inventa ahora. UAT-1 queda condicionada a esa confirmación; sin ella no inicia y no se declara PASS. Condiciones del disparo: solo DEV, datos sintéticos, sin operación destructiva, sin producción. Si ningún disparo manual seguro existe, el propietario decide entonces cómo cerrar el gate (se le vuelve a consultar; no se sustituye por prueba automatizada sin su decisión).
+3. El propietario redefine UAT-1 como parcial (solo `fail`). Sustituye del UAT-1 firmado únicamente el criterio del dato sintético en el `message` y su disparo; el resto del gate (obligatorio, UAT-LIGHT, solo DEV, sin operación destructiva, sin producción) se mantiene. Ese criterio se cubre solo con las pruebas automatizadas aprobadas (AC-01, AC-02 y fallback), que no cuentan como validación manual ni como PASS. UAT-1 admite como máximo PASS PARCIAL; la aceptación funcional del propietario es requisito del merge. Disparo: invitación duplicada sobre una cuenta sintética `invited` existente en DEV; si no existe, UAT-1 queda BLOQUEADA y se informa al propietario.
 
 ## Preguntas abiertas
 Ninguna.
 
 ## Definition of Done
-AC de la fase con evidencia en el veredicto del reviewer; lo no ejecutado de la matriz (suite completa, build) figura como NO EJECUTADO con su motivo. UAT-1 ejecutada y aceptada funcionalmente por el propietario (gate obligatorio, sección «UAT»), registrada en `docs/evidence/users-logs-hardening-uat.md`; es requisito del merge y el APROBADO del reviewer no la sustituye.
+AC de la fase con evidencia en el veredicto del reviewer; lo no ejecutado de la matriz (suite completa, build) figura como NO EJECUTADO con su motivo. UAT-1 (manual, parcial, solo `fail`) ejecutada sobre el commit exacto del PR #33 y aceptada funcionalmente por el propietario como PASS PARCIAL como máximo (gate obligatorio, sección «UAT»), registrada en `docs/evidence/users-logs-hardening-uat.md`; `logError` y `clerkFailure` constan allí como solo automatizados (AC-01, AC-02, fallback), sin PASS manual. Es requisito del merge y el APROBADO del reviewer no la sustituye.
