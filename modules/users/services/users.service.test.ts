@@ -1287,7 +1287,7 @@ describe("recoverUserAccess (SPEC sync-clerk-neon)", () => {
 
     await expect(run()).rejects.toBe(leaky);
     const [, payload] = (console.error as unknown as { mock: { calls: [string, Record<string, unknown>][] } }).mock.calls[0];
-    expect(payload).toEqual({ code: "internal_error", message: undefined, step: "clerk-get-user", status: 500 });
+    expect(payload).toEqual({ code: "internal_error", step: "clerk-get-user", status: 500 });
     expect(loggedText()).not.toContain("boom");
     expect(loggedText()).not.toContain(EMAIL);
   });
@@ -1432,10 +1432,55 @@ describe("updateUserName (USERS-1)", () => {
 
     expect(clerk.users.updateUser).toHaveBeenCalledTimes(1);
     expect(console.error).toHaveBeenCalledWith("users.service: updateUserName failed", {
-      code: "X1",
-      message: "db down",
+      code: undefined,
       step: "neon-after-clerk",
     });
+  });
+
+  it.each([
+    ["XX000", undefined],
+    ["X1", undefined],
+    ["23505", "23505"],
+    ["form_param_invalid", "form_param_invalid"],
+  ])("Neon error code %s is logged as %s", async (code, expected) => {
+    sqlMock.mockResolvedValueOnce([storedRow()]).mockRejectedValueOnce(Object.assign(new Error("db down"), { code }));
+
+    await expect(updateUserName(SUPER, NAME_INPUT)).rejects.toThrow(PARTIAL);
+
+    expect(console.error).toHaveBeenCalledWith("users.service: updateUserName failed", {
+      code: expected,
+      step: "neon-after-clerk",
+    });
+  });
+
+  it.each([["ana@example.com"], [""], ["a".repeat(65)], [42]])(
+    "AC-04: invalid Neon code %j is logged as undefined",
+    async (code) => {
+      sqlMock.mockResolvedValueOnce([storedRow()]).mockRejectedValueOnce(Object.assign(new Error("db down"), { code }));
+
+      await expect(updateUserName(SUPER, NAME_INPUT)).rejects.toThrow(PARTIAL);
+
+      const [, payload] = vi.mocked(console.error).mock.calls[0];
+      expect(payload).toEqual({ code: undefined, step: "neon-after-clerk" });
+    },
+  );
+
+  it("AC-01: a Neon error with email, name and Clerk id in message, detail and code is not logged", async () => {
+    const EMAIL = "persona@example.com";
+    const CLERK_ID = "user_dead";
+    const hostile = Object.assign(new Error(`dup ${EMAIL} Nombre Sintetico ${CLERK_ID}`), {
+      code: EMAIL,
+      detail: `Key (email)=(${EMAIL}) ${CLERK_ID}`,
+    });
+    sqlMock.mockResolvedValueOnce([storedRow()]).mockRejectedValueOnce(hostile);
+
+    await expect(updateUserName(SUPER, NAME_INPUT)).rejects.toThrow(PARTIAL);
+
+    const [, payload] = vi.mocked(console.error).mock.calls[0];
+    expect(payload).not.toHaveProperty("message");
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toMatch(
+      new RegExp(`${EMAIL}|Nombre Sintetico|${CLERK_ID}`),
+    );
   });
 
   it("0 rows after Clerk: partial message (not CHANGED), single Clerk call, tagged log", async () => {
@@ -1448,7 +1493,6 @@ describe("updateUserName (USERS-1)", () => {
     expect(clerk.users.updateUser).toHaveBeenCalledTimes(1);
     expect(console.error).toHaveBeenCalledWith("users.service: updateUserName failed", {
       code: undefined,
-      message: undefined,
       step: "neon-after-clerk",
     });
   });
@@ -1558,7 +1602,6 @@ describe("updateUser (USERS-1b)", () => {
     expect(clerk.users.updateUser).toHaveBeenCalledTimes(1);
     expect(console.error).toHaveBeenCalledWith("users.service: updateUser failed", {
       code: undefined,
-      message: new UsersError(ROLE_FAILED).message,
       step: "neon-role-after-name",
     });
   });
@@ -1668,9 +1711,43 @@ describe("deleteUser (USERS-DELETE)", () => {
     expect(thrown).not.toBeInstanceOf(UsersError);
     expect(deletes()).toHaveLength(0);
     const logged = vi.mocked(console.error).mock.calls[0][1] as Record<string, unknown>;
-    expect(Object.keys(logged).sort()).toEqual(["code", "message", "step"]);
+    expect(Object.keys(logged).sort()).toEqual(["code", "step"]);
     expect(logged.step).toBe("clerk-delete-user");
     expect(JSON.stringify(logged)).not.toContain(EMAIL);
+  });
+
+  it.each([
+    ["clerk-delete-user", () => stored(), () => clerk.users.deleteUser],
+    ["clerk-revoke-invitation", () => invited(), () => clerk.invitations.revokeInvitation],
+  ])("AC-02: %s logs only code and step, even if Clerk or generic messages carry personal data", async (step, row, fn) => {
+    const leak = `${EMAIL} Nombre Sintetico user_target`;
+    const clerkErr = new ClerkAPIResponseError(`clerk ${leak}`, {
+      data: [{ code: "form_param_invalid", message: leak, long_message: leak }],
+      status: 400,
+    });
+    for (const error of [clerkErr, new Error(leak)]) {
+      vi.clearAllMocks();
+      sqlMock.mockResolvedValueOnce([row()]);
+      fn().mockRejectedValueOnce(error);
+
+      await expect(run()).rejects.toBe(error);
+
+      const [, logged] = vi.mocked(console.error).mock.calls[0] as [string, Record<string, unknown>];
+      expect(logged).toEqual({ code: error === clerkErr ? "form_param_invalid" : undefined, step });
+      expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toMatch(/example\.com|Nombre Sintetico|user_target/);
+    }
+  });
+
+  it("clerkFailure falls back to a valid error.code on a non-Clerk error and validates it", async () => {
+    for (const [code, expected] of [["23505", "23505"], ["XX000", undefined], [EMAIL, undefined]] as const) {
+      vi.clearAllMocks();
+      sqlMock.mockResolvedValueOnce([stored()]);
+      clerk.users.deleteUser.mockRejectedValueOnce(Object.assign(new Error(`boom ${EMAIL}`), { code }));
+
+      await expect(run()).rejects.toThrow();
+
+      expect(vi.mocked(console.error).mock.calls[0][1]).toEqual({ code: expected, step: "clerk-delete-user" });
+    }
   });
 
   it.each([
@@ -1723,6 +1800,7 @@ describe("deleteUser (USERS-DELETE)", () => {
       "users.service: deleteUser failed",
       expect.objectContaining({ step: "neon-after-clerk" }),
     );
+    expect(vi.mocked(console.error).mock.calls[0][1]).not.toHaveProperty("message");
 
     sqlMock.mockResolvedValueOnce([stored()]).mockResolvedValueOnce([{ id: ROW_ID }]);
     clerk.users.deleteUser.mockRejectedValueOnce(clerkError(404));

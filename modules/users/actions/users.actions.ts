@@ -20,6 +20,7 @@ import {
   recoverUserAccess,
   resendInvitation,
   revokeUser,
+  safeLogCode,
   updateUser,
   UsersError,
 } from "../services/users.service";
@@ -37,10 +38,9 @@ async function authorize<T>(schema: z.ZodType<T>, input: unknown): Promise<{ act
   return parsed.success ? { actor, data: parsed.data } : null;
 }
 
-// D42: only UsersError reaches the user. The log carries code and message, never emails or personal data.
+// D42: only UsersError reaches the user. The log carries only a validated code, never the message, emails or personal data.
 function fail(action: string, error: unknown): { ok: false; error: string } {
-  const { code, message } = (error ?? {}) as { code?: unknown; message?: unknown };
-  console.error(`${action} failed`, { code, message });
+  console.error(`${action} failed`, { code: safeLogCode((error as { code?: unknown } | null | undefined)?.code) });
   return { ok: false, error: error instanceof UsersError ? error.message : GENERIC_ERROR };
 }
 
