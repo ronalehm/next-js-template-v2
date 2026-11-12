@@ -20,6 +20,7 @@ vi.mock("next/headers", () => ({ headers: async () => ({ get: mocks.origin }) })
 // Real UsersError (instanceof must hold), mocked service functions; real `can` and schemas.
 vi.mock("../services/users.service", async (importOriginal) => ({
   UsersError: (await importOriginal<typeof import("../services/users.service")>()).UsersError,
+  safeLogCode: (await importOriginal<typeof import("../services/users.service")>()).safeLogCode,
   inviteUser: mocks.invite,
   updateUser: mocks.update,
   revokeUser: mocks.revoke,
@@ -205,7 +206,7 @@ describe.each(CASES)("$name action", (c) => {
     }
   });
 
-  it("AC-09: a non-UsersError is not leaked; the log carries only code and message", async () => {
+  it("AC-09: a non-UsersError is not leaked; the log carries only a validated code (uppercase XX000 becomes undefined)", async () => {
     c.service.mockRejectedValue(
       Object.assign(new Error("db down for ana@example.com"), { code: "XX000", stack: "STACKTRACE", detail: "row ana" }),
     );
@@ -214,8 +215,31 @@ describe.each(CASES)("$name action", (c) => {
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledTimes(1);
     const [, payload] = vi.mocked(console.error).mock.calls[0];
-    expect(payload).toEqual({ code: "XX000", message: "db down for ana@example.com" });
+    expect(payload).toEqual({ code: undefined });
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("ana");
   });
+
+  it("AC-09: a numeric SQLSTATE code is kept; message, detail and stack are not logged", async () => {
+    c.service.mockRejectedValue(
+      Object.assign(new Error("dup ana@example.com"), { code: "23505", stack: "STACKTRACE ana", detail: "Key (email)=(ana@example.com)" }),
+    );
+
+    expectRejected(await c.action(c.input));
+    const [, payload] = vi.mocked(console.error).mock.calls[0];
+    expect(payload).toEqual({ code: "23505" });
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("ana");
+  });
+
+  it.each([["ana@example.com"], ["X1"], [""], ["a".repeat(65)], [42]])(
+    "AC-04: invalid code %j is logged as undefined",
+    async (code) => {
+      c.service.mockRejectedValue(Object.assign(new Error("boom"), { code }));
+
+      expectRejected(await c.action(c.input));
+      const [, payload] = vi.mocked(console.error).mock.calls[0];
+      expect(payload).toEqual({ code: undefined });
+    },
+  );
 
   it("AC-09: a UsersError message does reach the caller", async () => {
     c.service.mockRejectedValue(new UsersError("No tienes permiso para esta acción."));
