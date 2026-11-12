@@ -32,7 +32,7 @@ Verificación de código: endurecimiento de logs de error (`fail`, `logError`, `
 
 | Prueba | Tipo | Estado de resultado | Commit exacto | Qué validó el usuario | Conclusión de impacto ante commit nuevo |
 |---|---|---|---|---|---|
-| UAT-1 | manual (parcial, solo `fail`) | PASS PARCIAL **propuesto** (no marcado: lo marca el propietario) | c59a0ef | Declarado: mensaje en pantalla coincide; línea de log exactamente `inviteUserAction failed { code: undefined }`; sin cambios en la fila ni en Clerk/Neon | ajena → PASS vigente solo si se acepta; commit de solo documentación sobre 3ac960a, código sin cambios |
+| UAT-1 | manual (parcial, solo `fail`) | PASS PARCIAL (aceptado por el propietario en el chat, 2026-11-12; hora: no registrada). No es PASS completo | c59a0ef | Declarado: mensaje en pantalla coincide; línea de log exactamente `inviteUserAction failed { code: undefined }`; sin cambios en la fila ni en Clerk/Neon | ajena → PASS vigente; commit de solo documentación sobre 3ac960a, código sin cambios |
 | AC-01, AC-02 y fallback a `error.code` (`logError`, `clerkFailure`) | automatizada | PASS (reviewer, ciclo 1 sobre 3ac960a) | 3ac960a | No aplica: no cuenta como validación manual ni como PASS manual | ajena → vigente (código sin cambios hasta c59a0ef) |
 
 ### Ficha UAT-1 (compacta)
@@ -42,8 +42,8 @@ Formato: `prueba · esperado · observado · estado · siguiente acción`.
 - Prueba: UAT-1. Ruta `/dashboard/users`. Pasos: filtro «Invitados»; «Invitar usuario» con el correo de una fila `invited` existente (cuenta de prueba del propietario; correo tapado: `ron…@gmail.com`); rol Usuario; «Enviar invitación».
 - Esperado: mensaje «Ya tiene una invitación pendiente. Usa Reenviar invitación.» y log `inviteUserAction failed { code: undefined }`, sin `message` ni correo.
 - Observado (declarado): el mensaje en pantalla coincide; la línea del log fue exactamente `inviteUserAction failed { code: undefined }`; sin cambios en la fila ni en Clerk/Neon.
-- Estado: PASS PARCIAL propuesto. Un PASS manual lo marca el propietario, no un agente.
-- Siguiente acción: decisión del propietario (ver casillas al final).
+- Estado: PASS PARCIAL (aceptado por el propietario; cobertura parcial, no PASS completo). Lo marcó el propietario, no un agente.
+- Siguiente acción: ver «Cierre / pendientes».
 
 ### Cobertura
 
@@ -66,22 +66,27 @@ El criterio original (dato sintético en el `message`) se cubre solo por esas pr
 
 | ID | Prueba relacionada | Descripción | Clasificación | Prioridad | Decisión | Autorización | Implementación (PR y/o ticket) | Regresión | Aceptación | Responsable / asignado | Estado de ciclo de vida |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| UAT-1-ADJ-01 | UAT-1 | Al ejecutar la acción, el servidor de desarrollo de Next imprimió su propio rastro `ƒ inviteUserAction({"email":"<correo completo>","role":"user"})` con los argumentos de la server action, incluido el correo completo (no se reproduce aquí). No es un log de `users.service.ts` ni `users.actions.ts`; fuera del alcance de la spec. No se verificó si ocurre en producción | Privacidad (observación informativa; no bloquea el cierre de F3) | Informativa | Pendiente (propietario): incluir / posponer / rechazar / reformular | — | — | — | — | Propietario | resultado manual confirmado |
+| UAT-1-ADJ-01 | UAT-1 | Al ejecutar la acción, el servidor de desarrollo de Next imprimió su propio rastro `ƒ inviteUserAction({"email":"<correo completo>","role":"user"})` con los argumentos de la server action, incluido el correo completo (no se reproduce aquí). No es un log de `users.service.ts` ni `users.actions.ts`; fuera del alcance de la spec. No se verificó si ocurre en producción | Privacidad (observación informativa; no bloquea el cierre de F3) | Informativa | Pospuesta (propietario; decisión en el chat, 2026-11-12) | — | Seguimiento independiente (sin PR ni ticket asignado todavía): investigar la exposición de argumentos de server actions en los logs de desarrollo de Next.js | — | — | Propietario | pospuesta (backlog) |
 
 ## Gobierno
 
 - Spec aprobada y firmada (segunda aprobación tras redefinir UAT-1); `approvals.jsonl` sin editar.
 - La aceptación UAT no es autorización ni aprobación (`apruebo` / `autorizo gobierno`).
 
-## Pendientes
+## Evaluación de impacto de este registro
 
-- Aceptación funcional del propietario (casillas siguientes).
-- Decisión del propietario sobre UAT-1-ADJ-01.
-- Commit y push de este registro (lo hace el propietario) y evaluación de CI del commit nuevo (solo documentación).
-- Merge solo tras cumplir el gate (`docs/SETUP.md`).
-- No se declara PASS ni F3 cerrada.
+Este registro y su commit son solo documentación; el código sigue siendo `3ac960a` (revisado, 411 pruebas dirigidas PASS) y la UAT se ejecutó sobre `c59a0ef`; sin commits de código posteriores → ajena → PASS vigente. El CI de los commits de solo documentación (`bb9aa59` y el siguiente) lo verifica el propietario; no se afirma aquí.
+
+## Cierre / pendientes
+
+- Aceptación funcional registrada (propietario, chat, 2026-11-12). La aceptación UAT no equivale a `apruebo` ni a `autorizo gobierno`.
+- Pendientes: CI del commit documental final (lo verifica el propietario) y decisión de merge del propietario (la decide un humano).
+- UAT-1-ADJ-01 pospuesta con seguimiento independiente (sin PR ni ticket todavía).
+- No se declara F3 cerrada ni mergeada; el PASS es parcial.
 
 ## Decisión del propietario
 
-- [ ] Acepto UAT-1 como PASS PARCIAL
-- [ ] Acepto funcionalmente F3 (USERS-LOGS-HARDENING)
+Decisión expresada en el chat (2026-11-12): «Acepto UAT-1 como PASS PARCIAL y acepto funcionalmente F3, con la cobertura manual y automatizada documentada. Decisión UAT-1-ADJ-01: POSPONER con seguimiento independiente para investigar la exposición de argumentos de server actions en los logs de Next.js.»
+
+- [x] Acepto UAT-1 como PASS PARCIAL (aceptada por el propietario en el chat, 2026-11-12; hora: no registrada)
+- [x] Acepto funcionalmente F3 (USERS-LOGS-HARDENING) (aceptada por el propietario en el chat, 2026-11-12; hora: no registrada)
