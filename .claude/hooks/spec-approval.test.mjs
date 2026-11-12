@@ -926,6 +926,32 @@ test("agent limits: settings hooks enforce them by agent_type", () => {
   assert.equal(shell(undefined, "Bash", "wc -l docs/specs/approvals.jsonl"), 0);
 });
 
+test("product agent: read-only, blocked on every write and delegation tool", () => {
+  const p = project();
+  const write = (tool_name, rel) =>
+    p.run("guard", { agent_type: "product", session_id: SESSION, tool_name, tool_input: { file_path: join(p.dir, rel), old_string: "a", new_string: "b", content: "x" } }).code;
+  for (const tool of ["Write", "Edit", "MultiEdit", "NotebookEdit"]) {
+    for (const rel of ["README.md", "docs/evidence/a.md", "docs/specs/a.md", ".claude/settings.json", ".claude/settings.local.json", ".claude/agents/product.md"]) {
+      assert.equal(write(tool, rel), 2, `${tool} ${rel}`);
+    }
+  }
+  const relay = (tool_name, tool_input = { command: "ls" }, ...agent) =>
+    p.run("relay", { agent_type: agent.length ? agent[0] : "product", tool_name, tool_input }).code;
+  for (const tool of ["Bash", "PowerShell", "mcp__terminal__run"]) assert.equal(relay(tool), 2, tool);
+  assert.equal(relay("Bash", { command: "claude --dangerously-skip-permissions" }), 2);
+  assert.equal(relay("Agent", { subagent_type: "developer", prompt: "x" }), 2);
+  for (const tool of ["SendMessage", "CronCreate", "RemoteTrigger", "mcp__scheduled-tasks__create", "mcp__ccd_session_mgmt__send_message", "mcp__ccd_session__start_session", "mcp__ccd_session__hand_off_to_session"]) {
+    assert.equal(relay(tool, { x: "y" }), 2, tool);
+  }
+  const reason = p.run("relay", { agent_type: "product", tool_name: "Bash", tool_input: { command: "ls" } }).out;
+  assert.match(reason, /solo lectura/);
+  // regression: other agents keep their results
+  assert.equal(relay("Bash", { command: "ls" }, "developer"), 0);
+  assert.equal(relay("Bash", { command: "ls" }, "orchestrator"), 0);
+  assert.equal(relay("Bash", { command: "ls" }, undefined), 0);
+  assert.equal(relay("Agent", { subagent_type: "developer", prompt: "x" }, undefined), 0);
+});
+
 // governance-sdd-reliability, Fase A: fases de varias palabras, firma legada y gobierno por fase.
 
 const statementOf = (p, name = "g") =>

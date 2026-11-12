@@ -297,8 +297,9 @@ Si un trabajo en BUILD crece más de lo previsto o toca un disparador, se detien
 | **Spec** | Convierte el pedido en una especificación clara y verificable. Revisa qué existe ya en el proyecto y en shadcn. | Tarea del orquestador | `docs/specs/<module>-<feature>.md` |
 | **Developer** | Implementa exactamente lo que dice la spec, siguiendo las secciones 1 y 2 de este documento, y escribe los unit tests requeridos. | Spec aprobada | Código y tests que pasan |
 | **Reviewer** | Verifica el código contra la spec y este documento. Aprueba o devuelve con observaciones concretas. No corrige el código él mismo. | Spec + cambios | Aprobado / lista de observaciones |
+| **Product** | Agente principal de solo lectura (`claude --agent product`) para UAT funcional: verifica identificación y gate de inicio, guía una prueba por interacción, registra resultados y prepara el paquete de evidencias. No escribe, no ejecuta comandos, no lanza agentes ni publica en GitHub/Linear. | Brief del orquestador | Resultados, observaciones y paquete en el chat |
 
-Definidos en `.claude/agents/` (`orchestrator.md`, `spec.md`, `developer.md`, `reviewer.md`).
+Definidos en `.claude/agents/` (`orchestrator.md`, `spec.md`, `developer.md`, `reviewer.md`, `product.md`).
 
 **Uso:** iniciar Claude Code con el orquestador como agente principal y describirle la funcionalidad:
 
@@ -362,13 +363,28 @@ Fuente única de las reglas UAT para cualquier `<INICIATIVA>`. Cita «Rutas de t
 
 **Responsabilidades.**
 
-| Rol | Responsabilidad en UAT | No hace |
-|---|---|---|
-| Usuario funcional | Dispone de una copia local preparada; ejecuta instrucciones sencillas; reporta resultados y propone mejoras; acepta o rechaza el comportamiento funcional | Diagnosticar código ni ejecutar correcciones |
-| Orchestrator | Guía un caso por vez; registra observaciones mínimas; clasifica provisionalmente y verifica el procedimiento antes de implementar; coordina asignaciones, autorizaciones y revalidaciones | Escribir código ni archivos (solo casillas) |
-| Equipo interno + Claude Code | Resuelven ajustes menores cuando el gobierno vigente (ruta y autorización) lo autorice | Rodear rutas protegidas ni autorizaciones |
-| Frontend / Backend | Reciben cambios mayores o especializados; el trabajo escalado sigue el flujo SDD con spec y aprobación | (Sin agentes ni hooks nuevos) |
-| Reviewer | Ejecuta las verificaciones técnicas y de regresión que correspondan | Editar archivos |
+| Rol | Responsabilidad en UAT |
+|---|---|
+| Producto | Ejecutar UAT, registrar observaciones, definir la criticidad funcional, decidir su tratamiento y aceptar o rechazar la funcionalidad |
+| Developers | Implementar funcionalidades, evaluar la complejidad técnica, realizar correcciones autorizadas y apoyar el registro de evidencias |
+| DevOps / Integrador | Coordinar PR, integración y liberación autorizada a DEV Beta, verificando los controles previos del «Gate de liberación a DEV Beta» |
+
+`orchestrator`, `developer`, `reviewer` y `product` son herramientas, no roles. El `orchestrator` clasifica y coordina (ruta, asignaciones, autorizaciones, revalidaciones) y no escribe código ni archivos (solo casillas); el agente `developer` escribe el registro UAT en `Modo: build`; el `reviewer` ejecuta las verificaciones técnicas y de regresión y no edita archivos, y su APROBADO no es aceptación funcional; `product` es un agente principal de solo lectura (`claude --agent product`) que guía la UAT, no diagnostica, no corrige y no publica. El trabajo escalado sigue el flujo SDD con spec y aprobación. Los ajustes menores los resuelve el equipo interno + Claude Code solo cuando el gobierno vigente (ruta y autorización) lo autorice, sin rodear rutas protegidas.
+
+**Criticidad frente a complejidad.** Son conceptos separados y ninguno fija la ruta BUILD o SDD (la fija «Clasificación segura»). Criticidad funcional, la decide Producto (el agente asiste) y va en «Prioridad»: P0 crítica (seguridad, permisos, pérdida de datos o integridad); P1 alta (impide un flujo esencial); P2 media (problema funcional secundario o UX relevante); P3 baja (detalle visual o mejora menor). Complejidad técnica (Baja, Media, Alta): la evalúa Desarrollo, no `product`; va como metadato `Complejidad: <ID> · Baja|Media|Alta · evaluada por <nombre> (Developer)` asociado al ID, nunca en «Clasificación» (que solo contiene el tipo). Un P0 se escala de inmediato y bloquea la exposición de la funcionalidad afectada a usuarios beta hasta resolverse; los defectos bloqueantes de flujos esenciales (P1) se resuelven antes de habilitarla; los pendientes no bloqueantes solo se posponen con autorización expresa de Producto, documentados y asignados.
+
+**Resultados mostrados y estados internos.** La card ofrece estos resultados y nunca BLOQUEADO; el agente decide el estado interno según la causa que describe Producto:
+
+| Resultado mostrado | Estado interno (`docs/forms/uat.md`) |
+|---|---|
+| PASS | PASS |
+| NO PASS | FAIL |
+| PASS CON OBSERVACIONES | PASS CON OBSERVACIÓN |
+| NO EJECUTADO / No pude probar | BLOQUEADO si un defecto, dependencia o el entorno lo impide; NO EJECUTADO si no se intentó (tiempo, decisión o alcance) |
+
+Todo paso es obligatorio salvo que el brief lo marque como opcional. Precedencia del resultado general, sobre los estados internos: (1) algún paso obligatorio, u opcional ejecutado, NO PASS → NO PASS; (2) si no, algún paso obligatorio BLOQUEADO → BLOQUEADO; (3) si no, algún paso obligatorio NO EJECUTADO → NO EJECUTADO; (4) si no, algún paso PASS CON OBSERVACIONES → PASS CON OBSERVACIONES; (5) si no → PASS. Un paso obligatorio NO EJECUTADO o BLOQUEADO nunca produce PASS ni PASS CON OBSERVACIONES general; un opcional no ejecutado no cambia el general pero se informa.
+
+**Destino de observaciones y backlog compartido.** El backlog UAT es único desde el punto de vista operativo: vive en los PR de GitHub y en Linear (el proyecto de Linear indicado en el brief; no se crea otro) y Producto y Developers lo consultan. El acceso de ambos roles se comprueba con cuentas reales antes del primer uso y el brief lo declara; sin confirmación, las observaciones quedan como `PUBLICACIÓN PENDIENTE` y no se dan por registradas, aunque se documenten en `docs/evidence/<slug>-uat.md` (que se conserva siempre). `product` valida y prepara el contenido; publica una persona o proceso expresamente autorizado, identificado en el brief: en GitHub, el Developer humano asignado o un DevOps / Integrador autorizado; en Linear, Producto o quien administra el backlog. Antes de publicar, ese responsable verifica en GitHub y Linear que no exista un registro relacionado (sin duplicados). Orden de destino: (1) si corresponde al PR actual, comentario en su hilo (ID UAT, descripción, esperado, observado, criticidad, Developer responsable); (2) si corresponde a un ticket de Linear existente, se actualiza y se sigue allí (ID UAT, descripción, criticidad, decisión de Producto, enlace a la evidencia); (3) solo si es independiente y no hay registro relacionado, Issue nuevo en Linear (responsable, prioridad, descripción, referencia de la prueba, enlace a la evidencia). No se crea un Issue por cada observación menor resuelta en el PR. El registro guarda el enlace en «Implementación (PR y/o ticket)», no una copia del hilo. Los pospuestos con seguimiento posterior al PR se vinculan a un ticket activo (se reutiliza el relacionado; si está cerrado, se reabre o se crea uno enlazado), con enlaces cruzados ticket ↔ hilo del PR ↔ registro.
 
 El campo «responsable/asignado» vive en el registro UAT. Una persona puede ejercer dos capacidades, que pueden coexistir (Producto y Diseño, con las autorizaciones y permisos correspondientes). **Validador funcional:** prueba funcionalidades, reporta y acepta resultados funcionales; no diagnostica código. **Colaborador de código:** conoce programación asistida por IA; puede preparar correcciones menores en una rama independiente y proponer un PR para revisión técnica; no puede autoaprobar su cambio como único revisor. Es una capacidad adicional y explícitamente autorizada de la persona, no del rol de validación.
 
@@ -415,11 +431,45 @@ El campo «responsable/asignado» vive en el registro UAT. Una persona puede eje
 - **Durante UAT:** observaciones ligeras; clasificación y asignación por «Clasificación segura» y «Responsabilidades»; se permiten correcciones autorizadas dentro del PR solo si la ruta y la autorización vigentes lo permiten; lo que contradice una decisión firmada o toca rutas protegidas sigue su spec adicional.
 - **Trazabilidad por commit:** con PR, cada resultado lleva el commit exacto probado y su PASS queda ligado a él. Ante un commit nuevo se evalúa el impacto (archivos y áreas tocados, regresiones) y se registra, por cada PASS previo, «afectada → revalidar» o «ajena → PASS vigente» con justificación. Ante duda se revalida; seguridad, integridad, aislamiento y permisos se revalidan siempre que el cambio toque su área. Un PASS con alcance PR sin commit, o sobre un commit nuevo sin evaluación registrada, no es válido. El reporte de ronda indica el commit.
 - **Quién crea qué:** solo el humano autorizado (el propietario o el equipo humano) realiza commits, push y apertura de PR, incluidos los de corrección; el Orchestrator solo exige y registra el commit exacto. Toda corrección autorizada es un commit nuevo, repite la verificación técnica proporcional del reviewer y la revalidación de lo afectado.
-- **Merge:** solo tras cumplir los requisitos técnicos, las autorizaciones y la aceptación funcional aplicables; no se exige aceptación funcional si el gate se declaró «UAT no aplicable». El cierre del orquestador y el APROBADO del reviewer técnico no sustituyen la aceptación funcional.
+- **Merge:** solo tras cumplir los requisitos técnicos, las autorizaciones y la aceptación funcional aplicables; no se exige aceptación funcional si el gate se declaró «UAT no aplicable». El merge no equivale a liberar a DEV Beta («Gate de liberación a DEV Beta»). El cierre del orquestador y el APROBADO del reviewer técnico no sustituyen la aceptación funcional.
 - **Conciliaciones:** la condición 2 no se rebaja por UAT-LIGHT (8.8). Las condiciones 3 y 4 siguen la regla de entorno, con «versión del código» = commit del PR.
 - **Excepción preliminar:** antes del PR, en entorno aislado, cuando el equipo prepara expresamente una versión de prueba. Es provisional, se registra y se marca «alcance: preliminar» en registro y reporte, admite fecha o id de versión en lugar del commit, no marca PASS definitivo, no habilita merge y no sustituye el gate del PR cuando sea obligatorio.
 
-**Obligatoriedad y «UAT no aplicable».** La revisión técnica y la UAT funcional son controles distintos: los disparadores de riesgo determinan la ruta y la verificación técnica, no fuerzan una prueba humana. El gate es obligatorio por impacto funcional: el PR modifica comportamiento visible, flujos funcionales, reglas de negocio, permisos, autorización o tratamiento de datos que afecten al usuario. «UAT no aplicable» es un resultado del gate para un PR solo de documentación, instrucciones de agentes, gobierno o herramientas sin impacto funcional visible; exige justificación registrada y las verificaciones técnicas completas (condiciones 1 y 2 y las que la tabla del reviewer exija a su categoría; las condiciones 3 a 6 no aplican) y nunca omite controles técnicos, de seguridad, de aprobación ni de gobierno. Está prohibido declararlo si el PR cambia comportamiento funcional observable, permisos, autorización o autenticación, datos personales o esquema con efecto en el usuario; ante duda, el gate es obligatorio.
+**Obligatoriedad y «UAT no aplicable».** La revisión técnica y la UAT funcional son controles distintos: los disparadores de riesgo determinan la ruta y la verificación técnica, no fuerzan una prueba humana. El gate es obligatorio por impacto funcional: el PR modifica comportamiento visible, flujos funcionales, reglas de negocio, permisos, autorización o tratamiento de datos que afecten al usuario. «UAT no aplicable» es un resultado del gate para un PR solo de documentación, instrucciones de agentes, gobierno o herramientas sin impacto funcional visible; exige justificación registrada y las verificaciones técnicas completas (condiciones 1 y 2 y las que la tabla del reviewer exija a su categoría; las condiciones 3 a 6 no aplican) y nunca omite controles técnicos, de seguridad, de aprobación ni de gobierno. Está prohibido declararlo si el PR cambia comportamiento funcional observable, permisos de la aplicación, autenticación, autorización, reglas de negocio, datos personales o esquema con efecto en el usuario; ante duda, el gate es obligatorio. Los permisos de agentes y hooks de gobierno no son «permisos de la aplicación».
+
+**Gate de liberación a DEV Beta.** SETUP es la fuente normativa; `product.md` y `orchestrator.md` lo citan sin copiarlo. DEV Beta es un ambiente compartido con usuarios reales y no es desechable. Este gate es distinto del «Gate de inicio de pruebas» (que autoriza empezar una ronda): lo verifica **DevOps / Integrador** antes de exponer una funcionalidad con impacto funcional a usuarios reales de DEV Beta, y la aceptación funcional la da Producto. `product` no verifica ni autoriza la liberación: su paquete solo declara la aceptación (sí/no, versión exacta) y los pendientes bloqueantes. No define un proceso de liberación a producción ni implementa ni modifica CI/CD.
+
+Regla de liberación: «No habilitar una funcionalidad con impacto funcional para usuarios reales de DEV Beta sin aceptación previa de Producto.»
+
+Flujo:
+
+1. **Developer implementa** en una rama o worktree independiente, respetando el alcance y las autorizaciones SDD.
+2. **Reviewer verifica:** pruebas técnicas y revisión de los cambios.
+3. **Producto ejecuta UAT** sobre la versión candidata, en un entorno controlado con cuentas y datos de prueba aislados.
+4. **Se documentan las observaciones:** `product` prepara los resultados y las incidencias.
+5. **Se registran las incidencias** en el PR de GitHub o en Linear según «Destino de observaciones», conservando el registro formal UAT.
+6. **Developers corrigen** solo los ajustes autorizados, por la ruta que corresponda.
+7. **Reviewer verifica nuevamente** las correcciones y las pruebas de regresión.
+8. **Producto revalida y acepta** que los criterios funcionales se cumplen en la versión evaluada.
+9. **DevOps libera a DEV Beta** tras verificar el gate, las autorizaciones vigentes y la correspondencia entre la versión aceptada y la que se habilita.
+
+Condiciones obligatorias (las verifica DevOps / Integrador):
+
+1. Funcionalidad implementada y revisada técnicamente.
+2. Developer y validador de Producto identificados.
+3. Entorno de UAT controlado y separado de los datos reales de usuarios beta.
+4. Versión candidata identificada.
+5. Pruebas UAT obligatorias ejecutadas y documentadas.
+6. Observaciones registradas, clasificadas y vinculadas a GitHub o Linear según corresponda.
+7. Sin defectos críticos o bloqueantes pendientes de la funcionalidad que se liberará.
+8. Correcciones relevantes revisadas técnicamente y revalidadas funcionalmente.
+9. Aceptación funcional explícita de Producto.
+10. La versión a liberar corresponde a la validada, o tiene evaluación de impacto y las revalidaciones pertinentes.
+11. Integración y despliegue autorizados conforme al gobierno vigente.
+
+Regla sobre merge y momento de verificación: «El merge no constituye por sí mismo autorización de liberación. Si provoca una exposición automática a usuarios beta, DevOps verifica el gate antes del merge; si la exposición es independiente, antes de desplegar o habilitar.» Si cambió el código tras la aceptación, DevOps evalúa el impacto y revalida lo afectado. La aceptación UAT no sustituye las aprobaciones SDD, las firmas SSH ni las autorizaciones de integración o despliegue. Un registro con controles obligatorios pendientes (`PENDIENTE · <responsable>`) no es completo para cierre y no cumple el gate; una referencia en `PUBLICACIÓN PENDIENTE` no cumple la condición 6.
+
+**Seguridad de DEV Beta y minimización de datos.** No se ejecutan UAT destructivas sobre datos reales de usuarios beta; se usan cuentas y datos de prueba aislados; no se cambian permisos ni información de usuarios reales sin autorización específica; no se usan funcionalidades no aprobadas con usuarios reales. Un DEV Beta con usuarios reales cuenta como entorno real para la condición 4 del gate de inicio («cuentas y bases aisladas de producción»). Si el aislamiento es insuficiente, `product` detiene la ronda sin improvisar, registra BLOQUEADO y pide la preparación al responsable técnico. Las evidencias (paquete, comentarios de PR, tickets y registro) nunca incluyen secretos (contraseñas, tokens, claves, cookies, URLs con credenciales) ni datos personales de usuarios reales sin enmascarar o anonimizar (p. ej. `u***@dominio`); se registra solo lo necesario para reproducir; `product` no pide credenciales y, si las recibe, no las repite y pide retirarlas. Los nombres y roles de Developer, validador y publicador son datos de trabajo y no se anonimizan.
 
 **Colaboración por PR.** Desarrollo publica un PR técnicamente preparado y Producto/Diseño ejecuta UAT. Un defecto del PR original se comenta en ese PR y se coordina allí. Una mejora menor independiente puede prepararla Producto/Diseño en su propia rama y PR; si depende de código aún no integrado, el equipo coordina la rama base y evita PR conflictivos contra `main`. Frontend/Backend revisa técnicamente esas contribuciones; Reviewer, CI y aceptación funcional se aplican según corresponda, siempre bajo «Clasificación segura» y con rutas protegidas y decisiones firmadas sujetas a su spec y aprobación. **Linear:** mejoras planificadas, bugs pendientes, cambios de alcance independiente, priorización, responsables y seguimiento. **GitHub:** código, comentarios de revisión, PR, evidencias técnicas y verificaciones. No se crea un ticket por cada observación menor dentro de un PR; se vincula ticket y PR cuando corresponda, sin duplicar registros.
 

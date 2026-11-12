@@ -430,6 +430,7 @@ function guard() {
   // Settings hooks run without workspace trust; agent frontmatter hooks do not.
   if (input.agent_type === "orchestrator") orchestrator();
   if (input.agent_type === "developer") developer();
+  if (input.agent_type === "product") product();
   const target = file_path || notebook_path;
   if (!target) return;
   const abs = canonical(target);
@@ -476,6 +477,11 @@ function developer() {
   }
 }
 
+// product (PreToolUse inside the product agent): read-only. Whatever tool reaches this hook is blocked.
+function product() {
+  block(`el agente product es de solo lectura (${input.tool_name ?? "herramienta"}); el registro lo escribe un developer en Modo: build.`);
+}
+
 // orchestrator (PreToolUse Edit inside the orchestrator): its only edits are the plan checkboxes of a spec.
 function orchestrator() {
   const { file_path = "" } = input.tool_input ?? {};
@@ -490,6 +496,7 @@ const strings = (value) =>
 // ponytail: stops the literal command only; encoded or concatenated text passes. Declared as residual risk.
 function relay() {
   if (input.agent_type === "developer") developer();
+  if (input.agent_type === "product") product();
   const values = strings(input.tool_input);
   const command = (text) => APPROVE.test(text.trim()) || AUTHORIZE.test(text.trim());
   const launchesClaude = (text) =>
