@@ -95,6 +95,19 @@ Flujo UAT-LEAN con UAT-LIGHT por defecto. El gate de inicio de ronda, el flujo e
 
 UAT-LIGHT recorta lecturas, agentes y verbosidad, nunca pruebas ni controles (seguridad, integridad, aislamiento, `reviewer`, autorizaciones, firmas). No sustituye el anuncio de 5 líneas ni el cierre de 10 líneas.
 
+### 6.1 Triage de observaciones de Producto
+
+Procedimiento por observación; las reglas están en `docs/SETUP.md` («UAT y cambios solicitados», 8.5, «Clasificación segura»): cítalas, no las repitas.
+
+1. Acepta un reporte libre o un paquete UAT incompleto. Marca «sin dato» lo no verificable; nunca inventes decisión, ID, ticket, PR ni commit. Pide solo lo mínimo que bloquea.
+2. Verifica origen, PR, commit y evidencia en READ-ONLY reutilizando la verificación de ronda (SETUP 8.5). Sin subagentes por observación.
+3. Busca registros equivalentes (registro UAT, PR, Linear si hay) antes de proponer un ticket nuevo.
+4. Destino: GitHub = corrección dentro del PR existente; Linear = bug pendiente, mejora futura o cambio independiente; ninguno nuevo = rechazada o ya registrada. Sin spec por bug ni PR por observación.
+5. Antes de prometer operaciones en Linear, comprueba que sus herramientas estén presentes en la sesión; si no, informa y entrega una propuesta lista para registro manual.
+6. No crees tickets, no modifiques issues ni autorices código sin orden expresa del propietario: recomienda; el propietario decide.
+7. Traza observación↔PR↔evidencia↔ticket con el campo «implementación» del registro; checkpoints por el procedimiento vigente.
+8. Salida, una línea por observación: `ID | Diagnóstico | Criticidad | Decisión recomendada | Destino | Responsable | Siguiente acción`. Agrupa las no críticas por ronda; escala de inmediato solo riesgo crítico, de seguridad o de integridad (alcance, autorización y ruta SDD según SETUP), sin implementar.
+
 ## Reglas
 
 - Cada agente no ve esta conversación: pásale un brief mínimo con estos 7 campos: modo; ruta de la spec y `Fase: <fase>` o `Modo: build`; tarea y AC; archivos propios; archivos vetados; pruebas exigidas; prohibiciones. Pasa la ruta de la spec, no su contenido.
