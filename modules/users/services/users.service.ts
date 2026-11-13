@@ -83,10 +83,16 @@ function assertManager(actor: Actor) {
   }
 }
 
-// D42: code and message only, never emails or personal data.
+// D42 (users-logs-hardening RN-02): a code is logged only if it matches this shape; anything else becomes undefined.
+const SAFE_CLERK_CODE = /^[a-z0-9_]{1,64}$/;
+export function safeLogCode(code: unknown): string | undefined {
+  return typeof code === "string" && SAFE_CLERK_CODE.test(code) ? code : undefined;
+}
+
+// D42: only a validated code (plus step/status), never the message or other error fields.
 function logError(step: string, error: unknown, context: { step?: string; status?: number } = {}) {
-  const { code, message } = (error ?? {}) as { code?: unknown; message?: unknown };
-  console.error(`users.service: ${step} failed`, { code, message, ...context });
+  const code = safeLogCode((error as { code?: unknown } | null | undefined)?.code);
+  console.error(`users.service: ${step} failed`, { code, ...context });
 }
 
 // RN-12: invite/resend keep the default (true); recover passes false.
@@ -226,7 +232,6 @@ const noop = () => {};
 
 // RN-06: only code, status and step; Clerk messages may carry identifiers.
 // Non-Clerk errors never contribute their own code (arbitrary value): fixed "unexpected_error".
-const SAFE_CLERK_CODE = /^[a-z0-9_]{1,64}$/;
 function logIdentityFailure(step: "get-user-list" | "get-user", error: unknown) {
   const clerkError = isClerkAPIResponseError(error) ? error : undefined;
   const clerkCode = clerkError?.errors[0]?.code;
@@ -542,7 +547,7 @@ const PARTIAL_DELETE = "La cuenta se eliminó, pero el registro del panel no. Vu
 // RN-11: only the listed Clerk errors count as done; anything else is rethrown (generic message) before touching Neon.
 function clerkFailure(step: string, error: unknown) {
   const clerkError = isClerkAPIResponseError(error) ? error : undefined;
-  logError("deleteUser", { code: clerkError?.errors[0]?.code ?? (error as { code?: unknown })?.code, message: (error as Error)?.message }, { step });
+  logError("deleteUser", { code: clerkError?.errors[0]?.code ?? (error as { code?: unknown } | null | undefined)?.code }, { step });
 }
 
 // USERS-DELETE: Clerk first (irreversible, so every permission check comes before), then one conditional delete in Neon.

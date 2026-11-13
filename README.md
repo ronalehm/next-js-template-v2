@@ -13,16 +13,20 @@ Plantilla base para los proyectos de Ronald: Next.js 16 con una estructura modul
 | Validación y estado | zod, zustand |
 | Tests | Vitest + Testing Library (jsdom) |
 
-Requisitos: Node 22 o superior y npm.
+Requisitos: **Node.js 26 LTS (Lithium)** y npm. Se utiliza el último parche estable disponible de la rama `26.x`. Para Linux autoalojado, verifica que la distribución tenga `libatomic` instalado si lo exige el binario de Node 26.
 
 ## Inicio rápido
 
 ```sh
 git clone https://github.com/ronalehm/next-js-template-v2.git mi-proyecto
 cd mi-proyecto
-npm install
+nvm install 26      # nvm obtiene el último parche estable de Node 26
+nvm use 26
+npm ci --ignore-scripts
 npm run dev        # http://localhost:3000
 ```
+
+La versión de Node usada en desarrollo está declarada en `.nvmrc` y `.node-version` (rama 26). GitHub Actions ejecuta CI sobre Node 26 y `package.json` exige `26.x`. En Windows, usa un gestor compatible con tu instalación (por ejemplo, nvm-windows o Volta) para instalar la versión 26 LTS; el comando `nvm use 26` mostrado arriba corresponde a nvm en Linux/macOS. Si despliegas en Vercel, `engines.node` fija el runtime en Node 26.
 
 ### Instalación sin scripts (recomendada para esta plantilla)
 
