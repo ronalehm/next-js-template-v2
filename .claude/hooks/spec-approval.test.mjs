@@ -4,9 +4,10 @@ import { afterAll, test, vi } from "vitest";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { spawnSync, execSync } from "node:child_process";
-import { appendFileSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, linkSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const HOOK = join(import.meta.dirname, "spec-approval.mjs");
 
@@ -228,6 +229,7 @@ const GOVERNANCE = [
   "CLAUDE.md",
   "AGENTS.md",
   "docs/SETUP.md",
+  "docs/uat/product-agent.md",
   "docs/specs/approvals.jsonl",
 ];
 
@@ -261,6 +263,18 @@ test("governance: privileged authorization is limited by scope, session and spec
 
   p.write("g", p.file("g") + "- requisito colado\n");
   assert.equal(write(p, ".claude/settings.json").code, 2, "spec changed after authorization");
+});
+
+test("governance: docs/uat/product-agent.md needs privileged authorization, scoped to the listed file", () => {
+  const p = project();
+  governed(p, "g", { governance: ["docs/uat/product-agent.md"] });
+  assert.equal(approve(p).code, 0);
+  assert.equal(write(p, "docs/uat/product-agent.md").code, 2, "functional approval alone does not unlock");
+  assert.equal(authorize(p).code, 0);
+  assert.equal(write(p, "docs/uat/product-agent.md").code, 0, "listed + authorized");
+  assert.equal(write(p, "docs/uat/product-agent.md", "other-session").code, 2, "other session");
+  assert.equal(write(p, "docs/uat/other.md").code, 2, "unlisted uat file");
+  assert.equal(write(p, "docs/evidence/x.md").code, 0, "normal path untouched");
 });
 
 test("governance: only the user's signature of this exact request unlocks it", () => {
@@ -943,7 +957,10 @@ test("product agent: read-only, blocked on every write and delegation tool", () 
   for (const tool of ["SendMessage", "CronCreate", "RemoteTrigger", "mcp__scheduled-tasks__create", "mcp__ccd_session_mgmt__send_message", "mcp__ccd_session__start_session", "mcp__ccd_session__hand_off_to_session"]) {
     assert.equal(relay(tool, { x: "y" }), 2, tool);
   }
-  const reason = p.run("relay", { agent_type: "product", tool_name: "Bash", tool_input: { command: "ls" } }).out;
+  // AC-04 rewritten as allowlist (AC-C11): ls is outside C1, git status is inside; PowerShell stays read-only blocked.
+  assert.equal(relay("Bash", { command: "ls" }), 2);
+  assert.equal(relay("Bash", { command: "git status" }), 0);
+  const reason = p.run("relay", { agent_type: "product", tool_name: "PowerShell", tool_input: { command: "ls" } }).out;
   assert.match(reason, /solo lectura/);
   // regression: other agents keep their results
   assert.equal(relay("Bash", { command: "ls" }, "developer"), 0);
@@ -1305,4 +1322,419 @@ test("plan by phase: current phase without a matching subsection authorizes noth
   approve(s);
   assert.equal(write(s, "proxy.ts").code, 0, "no subsections: whole section counts");
   assert.equal(authorize(s).code, 0);
+});
+
+// governance-product-uat-commands, Fase 1 (T1): product C1 allowlist (Bash) and secrets mode (Read/Glob/Grep/@).
+
+const TARGETS = "127.0.0.1:3001";
+const productBash = (p, command, targets = TARGETS) => {
+  if (targets === null) delete p.env.PRODUCT_UAT_HTTP_TARGETS;
+  else p.env.PRODUCT_UAT_HTTP_TARGETS = targets;
+  return p.run("relay", { agent_type: "product", tool_name: "Bash", tool_input: { command } });
+};
+const secretsOf = (p, agent_type, tool_name, tool_input) =>
+  p.run("secrets", { agent_type, hook_event_name: "PreToolUse", tool_name, tool_input });
+const mentionOf = (p, agent_type, prompt) => p.run("secrets", { agent_type, hook_event_name: "UserPromptSubmit", prompt });
+
+test("product Bash: every C1 command is allowed (AC-C01, AC-C11, positives of AC-C03/C04)", () => {
+  const p = project();
+  const allowed = [
+    "git log -n 5", "git log --oneline HEAD", "git log HEAD^", "git log --stat --name-only --name-status -- src",
+    "git log -p --no-ext-diff --no-textconv HEAD", "git show --no-ext-diff --no-textconv HEAD",
+    "git show --stat --name-only --no-ext-diff --no-textconv HEAD~1", "git show --no-ext-diff --no-textconv HEAD:README.md",
+    "git diff --no-ext-diff --no-textconv", "git diff --no-ext-diff --no-textconv HEAD~3..HEAD",
+    "git diff --stat --name-only --name-status --no-ext-diff --no-textconv HEAD -- src",
+    "git status", "git status --short", "git status -s", "git status --porcelain", "git ls-files -- src",
+    "git rev-parse HEAD", "git rev-parse --short HEAD", "git rev-parse --abbrev-ref HEAD", "git rev-parse --show-toplevel",
+    "git branch --list", "git branch --show-current", "git blame -- README.md", "git blame -L 1,5 HEAD -- README.md",
+    "git grep -e foo -- src", "git grep -n -i -w -l -c -e foo -- src", "git grep -n -e 'foo bar' -- src",
+    "node --version", "npm --version",
+    "curl -q --noproxy 127.0.0.1 -s http://127.0.0.1:3001/api/x",
+    "curl -q --noproxy 127.0.0.1 -s -S -i -I --max-time 5 -H 'Accept: application/json' http://127.0.0.1:3001/api/x",
+    "curl -q --noproxy 127.0.0.1 -s 'http://127.0.0.1:3001/api/x?a=1&b=2'",
+  ];
+  for (const command of allowed) assert.equal(productBash(p, command).code, 0, command);
+});
+
+test("product Bash: git mutating commands are C4 (AC-C02)", () => {
+  const p = project();
+  const mutating = ["commit", "push", "checkout", "switch", "reset", "restore", "stash", "merge", "rebase", "cherry-pick", "apply", "am", "clean", "tag", "config", "worktree", "remote", "fetch", "pull"];
+  for (const sub of mutating) {
+    const r = productBash(p, `git ${sub}`);
+    assert.equal(r.code, 2, sub);
+    assert.match(r.out, /prohibido para todos/, sub);
+  }
+  assert.equal(productBash(p, "git branch -D x").code, 2);
+});
+
+test("product Bash: positive grammar rejects chaining, expansion, redirection and odd tokens (AC-C03)", () => {
+  const p = project();
+  const bad = [
+    "git log; git status", "git log && git status", "git log | cat", "git log $(echo HEAD)", "git log `echo HEAD`",
+    "git log > x", "git log < x", "VAR=x git log", "git log\ngit status", "git log\r", "git log \\\nHEAD",
+    "git log *", "git log ?", "git log [a]", "git log {a,b}", "git log $GITHUB_TOKEN", "git log ${GITHUB_TOKEN}",
+    'git log "$GITHUB_TOKEN"', "git log $'\\x2e'env", "git log ~/.ssh", "git log -- !!", "git log # x", "git log\t-n 5",
+    "git  log", " git log", "git log ", "git log && && git status", "git log --oneline HEAD~3..HEAD", "", "git log -n 5 &",
+    "git log 'a'b", 'git log "HEAD"', "git log 'HEAD",
+  ];
+  for (const command of bad) assert.equal(productBash(p, command).code, 2, JSON.stringify(command));
+  assert.doesNotMatch(productBash(p, "git log $GITHUB_TOKEN").out, /GITHUB_TOKEN/, "value never printed");
+  assert.doesNotMatch(productBash(p, "git log ${GITHUB_TOKEN}").out, /GITHUB_TOKEN/, "value never printed");
+});
+
+test("product Bash: git allowlist is per subcommand with exact tokens (AC-C04)", () => {
+  const p = project();
+  const bad = [
+    "git -C . log", "git -c core.pager=x log", "git --git-dir=x log", "git --work-tree=x log", "git log --output=x", "git log -o x",
+    "git diff --ext-diff", "git diff", "git diff --no-ext-diff", "git diff --no-textconv", "git show HEAD", "git show --no-ext-diff HEAD",
+    "git log -p", "git log -p --no-ext-diff HEAD", "git grep -Oless foo -- src", "git grep --open-files-in-pager=less foo -- src",
+    "git grep -nO foo -- src", "git grep -f .env -- src", "git grep --untracked foo -- .", "git grep -e foo", "git grep -n foo -- src",
+    "git diff --no-index a b", "git diff --no-ind a b", "git blame --contents .env README.md", "git blame -S x -- README.md",
+    "git blame README.md", "git status --ignored", "git branch -a", "git log --oneline=3", "git log -n5", "git log -n x",
+    "git show --no-ext-diff --no-textconv HEAD:.env", "git log -- :(top)src", "git log HEAD@{1}", "git log -- ../x", "git log -- /etc/passwd",
+    "git diff --no-ext-diff --no-textconv HEAD...main",
+  ];
+  for (const command of bad) assert.equal(productBash(p, command).code, 2, command);
+  assert.match(productBash(p, "git show --no-ext-diff --no-textconv HEAD:.env").out, /secretos/, "secret rule, not missing flags");
+});
+
+test("product Bash: Object.prototype keys never resolve in the allowlists (RN-C07)", () => {
+  const p = project();
+  const keys = ["constructor", "toString", "valueOf", "__proto__", "hasOwnProperty"];
+  const bad = keys.flatMap((k) => [
+    `git ${k}`, `git log ${k} --output=x`, `git log HEAD ${k} -p`, `git log ${k} x`, `git grep -e a ${k} -Ocmd -- src`,
+    `git log ${k} 5`, `git grep ${k} -e a -- src`, `git blame ${k} x -- README.md`, `git diff --no-ext-diff --no-textconv ${k} ${k}`,
+  ]);
+  for (const command of bad) {
+    const r = productBash(p, command);
+    assert.equal(r.code, 2, command);
+    assert.doesNotMatch(r.out, /TypeError|ReferenceError|\bat \S+ \(/, `no exception: ${command}`);
+  }
+  assert.equal(productBash(p, "git log -n 5 constructor").code, 0, "plain rev named like a key is still just a rev");
+});
+
+test("product Bash: curl gate (AC-C05)", () => {
+  const p = project();
+  const ok = "curl -q --noproxy 127.0.0.1 -s http://127.0.0.1:3001/api/x";
+  assert.equal(productBash(p, ok).code, 0);
+  assert.equal(productBash(p, ok, null).code, 2, "no PRODUCT_UAT_HTTP_TARGETS");
+  assert.equal(productBash(p, ok, "127.0.0.1:3002").code, 2, "host:port outside the list");
+  const base = "curl -q --noproxy 127.0.0.1";
+  const url = "http://127.0.0.1:3001/";
+  const bad = [
+    `${base} -s -L ${url}`, `${base} --location ${url}`, `${base} --next ${url}`, `${base} -: ${url}`, `${base} --url ${url}`,
+    `${base} ${url} ${url}b`, `${base} --resolve a:1:127.0.0.1 ${url}`, `${base} --connect-to a:1:b:2 ${url}`,
+    `${base} -x http://p:1 ${url}`, `${base} --proxy http://p:1 ${url}`, `${base} --unix-socket /x ${url}`,
+    `${base} http://127.0.0.1:3001/[1-3]`, `${base} 'http://127.0.0.1:3001/{a,b}'`, `${base} http://user:pw@127.0.0.1:3001/`,
+    `${base} -H 'Authorization: Bearer x' ${url}`, `${base} -H 'Cookie: a=b' ${url}`, `${base} -X POST ${url}`, `${base} -d a=b ${url}`,
+    `${base} --data-raw a ${url}`, `${base} -F a=b ${url}`, `${base} -T x ${url}`, `${base} -o x ${url}`, `${base} -O ${url}`,
+    `${base} -K x ${url}`, `${base} -b x ${url}`, `${base} -c x ${url}`, `${base} -u a:b ${url}`,
+    "curl -q --noproxy 10.0.0.1 http://10.0.0.1:3001/", `${base} https://127.0.0.1:3001/`, `${base} file:///x/.env`,
+    `curl --noproxy 127.0.0.1 ${url}`, `curl -s -q --noproxy 127.0.0.1 ${url}`, `curl -q -s ${url}`, `curl -q --noproxy localhost -s ${url}`,
+    `${base} --noproxy 127.0.0.1 -s ${url}`, `${base} -s http://127.0.0.1/`, `${base} -s http://127.0.0.1:3001/$TOKEN`,
+    `${base} -s "http://127.0.0.1:3001/$TOKEN"`, `${base} -s http://127.0.0.1:3001/\${TOKEN}`, `${base} -s`,
+  ];
+  for (const command of bad) assert.equal(productBash(p, command).code, 2, command);
+  assert.doesNotMatch(productBash(p, `${base} -s http://127.0.0.1:3001/$TOKEN`).out, /TOKEN/);
+  // a non-loopback host is refused even if the variable lists it
+  assert.equal(productBash(p, "curl -q --noproxy 10.0.0.1 -s http://10.0.0.1:3001/", "10.0.0.1:3001").code, 2);
+});
+
+test("product Bash: secrets through Bash are blocked (AC-C06)", () => {
+  const p = project();
+  const flags = "--no-ext-diff --no-textconv";
+  const bad = [
+    `git show ${flags} HEAD:.env`, `git show ${flags} HEAD:config/.env.production`, `git show ${flags} HEAD:.e{nv,}`,
+    `git show ${flags} HEAD:.en?`, `git show ${flags} HEAD:.en[v]`, `git show ${flags} HEAD:.e\\nv`, `git show ${flags} HEAD:'.e'nv`,
+    `git show ${flags} $'\\x2e'env`, "git grep -e foo -- .env", "git grep -e foo -- .env.local", `git diff ${flags} -- .env`,
+    "git log -- id_rsa", "git log -- server.pem", "git log -- .git/config", "git log -- .ssh/id_rsa", "git log -- .npmrc",
+    "git log -- .mcp.json", "git log -- .claude/settings.local.json", "git log -- credentials.json", `git diff ${flags} id_rsa`,
+    "curl -q --noproxy 127.0.0.1 file:///c/x/.env", "env", "printenv", "cat .env", "set", "export X=1",
+  ];
+  for (const command of bad) assert.equal(productBash(p, command).code, 2, command);
+  assert.equal(productBash(p, "git log -- .env.example").code, 0, ".env.example is not secret");
+  assert.match(productBash(p, `git show ${flags} HEAD:.env`).out, /secretos/);
+});
+
+test("product Bash: everything else outside C1 is blocked (AC-C07, AC-C08)", () => {
+  const p = project();
+  const bad = [
+    "npm install", "npm ci", "npm run dev", "npm exec x", "npx vitest run", "npx playwright test", "pnpm install", "yarn run x", "node -e 1", "node -p 1",
+    "node script.js", "python x.py", "sh x", "bash -c x", "powershell x", "cmd x", "rm x", "mv a b", "cp a b", "touch x", "mkdir x", "chmod +x x",
+    "gh pr list", "linear x", "vercel deploy", "clerk x", "claude", "ls", "cat README.md", "echo hi", "git", "npm --version x", "node --version --x",
+  ];
+  for (const command of bad) assert.equal(productBash(p, command).code, 2, command);
+  for (const command of ["npx vitest run", "npx playwright test", "curl -q --noproxy 127.0.0.1 -X POST http://127.0.0.1:3001/x"]) {
+    assert.match(productBash(p, command).out, /Producto.*ASISTIDA.*product solo propone el comando/, command);
+  }
+  for (const command of ["npm run dev", "vercel deploy", "git push", "rm x"]) assert.match(productBash(p, command).out, /prohibido para todos/, command);
+});
+
+test("product: non-Bash tools stay blocked; other agents keep their relay results (AC-C09, AC-C10)", () => {
+  const p = project();
+  for (const tool_name of ["PowerShell", "mcp__terminal__run", "Agent", "SendMessage", "CronCreate", "RemoteTrigger", "mcp__scheduled-tasks__create"]) {
+    assert.equal(p.run("relay", { agent_type: "product", tool_name, tool_input: { command: "git status" } }).code, 2, tool_name);
+  }
+  for (const agent_type of ["developer", "orchestrator", undefined]) {
+    assert.equal(p.run("relay", { agent_type, tool_name: "Bash", tool_input: { command: "ls" } }).code, 0, String(agent_type));
+  }
+  const src = readFileSync(HOOK, "utf8");
+  assert.match(src, /new Set\(\["spec", "reviewer", "Explore", "Plan"\]\)/, "IMPLEMENTS_NOTHING unchanged");
+});
+
+test("settings.json: only the two secrets entries were added (AC-C10)", () => {
+  const settings = JSON.parse(readFileSync(join(import.meta.dirname, "..", "settings.json"), "utf8"));
+  const secretsHooks = (entries) => entries.filter((e) => e.hooks.some((h) => / secrets$/.test(h.command)));
+  const pre = secretsHooks(settings.hooks.PreToolUse);
+  assert.equal(pre.length, 1);
+  assert.equal(pre[0].matcher, "Read|Glob|Grep");
+  assert.equal(pre[0].hooks[0].onFailure, "block");
+  const prompt = secretsHooks(settings.hooks.UserPromptSubmit);
+  assert.equal(prompt.length, 1);
+  assert.equal(prompt[0].hooks[0].onFailure, "block");
+  assert.equal(settings.hooks.UserPromptSubmit.length, 2);
+  assert.ok(settings.hooks.UserPromptSubmit.some((e) => e.hooks.some((h) => / record$/.test(h.command))), "record entry kept");
+  assert.equal(settings.hooks.PreToolUse.length, 4);
+  assert.ok(![...settings.permissions.deny, ...settings.permissions.ask].some((rule) => /\.env/.test(rule)), "no global .env permission rules");
+});
+
+function secretsProject() {
+  const p = project();
+  mkdirSync(join(p.dir, "src"), { recursive: true });
+  mkdirSync(join(p.dir, "config"), { recursive: true });
+  for (const f of [".env", ".env.local", ".env.example", "config/.env.production", "id_rsa", "server.pem", "src/page.tsx", "README.md", ".mcp.json"]) {
+    writeFileSync(join(p.dir, f), "x");
+  }
+  return p;
+}
+
+test("secrets mode: Read is confined to the repository and blocks secret paths (AC-C15)", () => {
+  const p = secretsProject();
+  const read = (file_path) => secretsOf(p, "product", "Read", { file_path }).code;
+  const home = homedir();
+  const blocked = [
+    ".env", ".env.local", "config/.env.production", ".ENV.LOCAL", "./src/../.env", join(p.dir, ".env"), "id_rsa", "server.pem", ".git/config",
+    "~/.claude/spec-approval.key", "~/.claude/.credentials.json", "~/.claude.json", "~/.git-credentials", "~/.aws/credentials",
+    "~/.config/gh/hosts.yml", join(home, ".aws", "credentials"), "../outside.txt", ".mcp.json", ".claude/settings.local.json",
+    ".env::$DATA", ".env.", ".env ", ".ENV", "src/../../outside.txt", join(p.dir, "..", "outside.txt"),
+  ];
+  if (process.platform === "win32") {
+    blocked.push(`/${home[0].toLowerCase()}/${home.slice(3).replace(/\\/g, "/")}/.aws/credentials`, `\\\\?\\${join(home, ".aws", "credentials")}`);
+  }
+  for (const file_path of blocked) assert.equal(read(file_path), 2, file_path);
+  for (const file_path of [".env.example", "src/page.tsx", "README.md", join(p.dir, "src/page.tsx")]) assert.equal(read(file_path), 0, file_path);
+  assert.equal(secretsOf(p, "product", "Read", {}).code, 2, "missing path fails closed");
+  // symlinks: to a secret inside the repo and to a file outside it
+  const outside = join(tempDir("outside-"), "ext.txt");
+  writeFileSync(outside, "ext");
+  try {
+    symlinkSync(join(p.dir, ".env.local"), join(p.dir, "notas.txt"));
+    symlinkSync(outside, join(p.dir, "externo.txt"));
+    assert.equal(read("notas.txt"), 2, "symlink to a secret");
+    assert.equal(read("externo.txt"), 2, "symlink to a file outside the repo");
+  } catch (e) {
+    if (e.code !== "EPERM") throw e; // Windows sin privilegio de symlink: se cubre en sesión real (AC-C16).
+  }
+  const outDir = tempDir("outdir-");
+  writeFileSync(join(outDir, "a.txt"), "x");
+  try {
+    symlinkSync(outDir, join(p.dir, "junction"), "junction");
+    assert.equal(read("junction/a.txt"), 2, "junction outside the repo");
+  } catch (e) {
+    if (e.code !== "EPERM") throw e;
+  }
+  if (process.platform === "win32") {
+    const short = execSync("for %I in (.env.local) do @echo %~sI", { cwd: p.dir, shell: "cmd.exe", encoding: "utf8" }).trim();
+    if (short && short.toLowerCase() !== ".env.local") assert.equal(read(short), 2, `8.3 name ${short}`);
+  }
+});
+
+test("secrets mode: Glob (AC-C15)", () => {
+  const p = secretsProject();
+  const glob = (tool_input) => secretsOf(p, "product", "Glob", tool_input).code;
+  for (const pattern of ["**/.env*", "**/*.pem", "**/*", "*", ".env", "**/id_rsa*", ".ssh/**/*.ts", "**/credentials*.json", "../**/*.ts", "~/.ssh/**", "**/.mcp.json"]) {
+    assert.equal(glob({ pattern }), 2, pattern);
+  }
+  assert.equal(glob({ pattern: "**/*.ts", path: join(p.dir, "..") }), 2, "root outside the repo");
+  assert.equal(glob({ pattern: "**/*.ts", path: ".env" }), 2, "secret path");
+  for (const tool_input of [{ pattern: "src/**/*.ts" }, { pattern: "**/*.tsx", path: "src" }, { pattern: "**/*.md" }, { pattern: "modules/**/*.ts", path: join(p.dir, "src") }]) {
+    assert.equal(glob(tool_input), 0, JSON.stringify(tool_input));
+  }
+});
+
+test("secrets mode: Grep needs a closed, bounded scope (AC-C15)", () => {
+  const p = secretsProject();
+  const grep = (tool_input) => secretsOf(p, "product", "Grep", { pattern: "UAT_FAKE_SECRET", ...tool_input }).code;
+  const blocked = [
+    {}, { path: "." }, { path: "src" }, { path: "src", glob: "*" }, { path: "src", glob: "**/*" }, { path: ".env", type: "ts" },
+    { path: "src", glob: ".env" }, { path: "src", type: "json" }, { path: "src", glob: "*.json" }, { path: "src", type: "yaml" },
+    { path: "src", type: "ts", glob: "*.json" }, { path: "src", glob: "*.{ts,json}" }, { path: "src", glob: "!*.ts" }, { path: "src", glob: "*.ts,*.json" },
+    { path: "src", glob: "credentials*.json" }, { path: "src", glob: "**/credentials*.json" }, { path: "config/credentials.json", type: "ts" },
+    { type: "ts" }, { path: join(p.dir, ".."), type: "ts" }, { path: "src", glob: "*.ts *.md" }, { path: "src", glob: "*.pem" }, { path: "src", type: "env" },
+    { path: "src", type: "config" }, { path: "src", type: "ts", glob: "[a].ts" }, { path: "src", glob: "src/*.ts" },
+    ...["files_with_matches", "count", "content"].map((output_mode) => ({ path: "src", output_mode })),
+  ];
+  for (const input of blocked) assert.equal(grep(input), 2, JSON.stringify(input));
+  const ok = [
+    { path: "src", type: "ts" }, { path: "modules", glob: "**/*.tsx" }, { path: "src", glob: "*.md" }, { path: "src", type: "js", glob: "*.mjs" },
+    ...["ts", "js", "md", "css", "html"].map((type) => ({ path: "src", type })),
+    ...["ts", "tsx", "js", "jsx", "mjs", "cjs", "md", "mdx", "css", "html"].flatMap((ext) => [{ path: "src", glob: `*.${ext}` }, { path: "src", glob: `**/*.${ext}` }]),
+    ...["files_with_matches", "count", "content"].map((output_mode) => ({ path: "src", type: "ts", output_mode })),
+  ];
+  for (const input of ok) assert.equal(grep(input), 0, JSON.stringify(input));
+});
+
+test("secrets mode: @mentions in the prompt (AC-C15)", () => {
+  const p = secretsProject();
+  const mention = (prompt) => mentionOf(p, "product", prompt).code;
+  for (const prompt of ["@.env.local", "mira @config/.env.production", "@./x/../.env", "@~/.ssh/id_rsa", "ver @id_rsa por favor", "@../outside.txt", '@".env.local"', "@.env.local, gracias"]) {
+    assert.equal(mention(prompt), 2, prompt);
+  }
+  for (const prompt of ["@src/page.tsx", "@docs/", "hola", "escribe a a@b.com", "@src/page.tsx y @.env.example", "@src/page.tsx."]) assert.equal(mention(prompt), 0, prompt);
+  assert.equal(p.run("secrets", { agent_type: "product", hook_event_name: "Stop" }).code, 2, "unknown event fails closed");
+});
+
+test("secrets mode: any other agent exits 0 untouched (AC-C10, AC-C15)", () => {
+  const p = secretsProject();
+  for (const agent_type of ["developer", "orchestrator", undefined]) {
+    for (const [tool_name, tool_input] of [
+      ["Read", { file_path: ".env" }], ["Read", { file_path: "docs/specs/x.md" }], ["Read", { file_path: ".env.example" }], ["Read", { file_path: "../outside.txt" }],
+      ["Read", { file_path: "~/.aws/credentials" }], ["Glob", { pattern: "**/.env*" }], ["Grep", { pattern: "x" }], ["Grep", { pattern: "x", glob: "*.json" }],
+    ]) {
+      assert.equal(secretsOf(p, agent_type, tool_name, tool_input).code, 0, `${agent_type} ${tool_name} ${JSON.stringify(tool_input)}`);
+    }
+    assert.equal(mentionOf(p, agent_type, "@.env.local @~/.ssh/id_rsa").code, 0, `${agent_type} @`);
+  }
+  // record keeps working for approvals alongside the new mode
+  p.spec("a");
+  assert.equal(p.say("apruebo docs/specs/a.md").code, 0);
+});
+
+test("secrets mode: hardLinked ignores directories (nlink>=2) and fails closed on stat errors (AC-C15, RN-C08)", () => {
+  const p = secretsProject();
+  const pre = join(tempDir("hl-preload-"), "preload.mjs");
+  writeFileSync(
+    pre,
+    `import fs, { statSync } from "node:fs";
+const real = statSync;
+fs.statSync = (path, ...rest) => {
+  const name = String(path).replace(/[\\\\/]+$/, "").split(/[\\\\/]/).pop();
+  if (process.env.HL_FAKE === "dir" && name === "src") return { isFile: () => false, nlink: 3 };
+  if (process.env.HL_FAKE === "eacces" && name === "README.md") throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+  return real(path, ...rest);
+};
+process.getBuiltinModule("module").syncBuiltinESMExports();
+`,
+  );
+  p.env.NODE_OPTIONS = `--import ${pathToFileURL(pre).href}`;
+  const read = (file_path) => secretsOf(p, "product", "Read", { file_path }).code;
+  assert.equal(read("README.md"), 0, "control without fake");
+  p.env.HL_FAKE = "dir";
+  assert.equal(read("src"), 0, "Read of a dir with nlink 3");
+  assert.equal(mentionOf(p, "product", "mira @src/").code, 0, "@dir/ with nlink 3");
+  p.env.HL_FAKE = "eacces";
+  assert.equal(read("README.md"), 2, "EACCES fails closed");
+});
+
+test("secrets mode: hard links and oversized Grep scopes fail closed (AC-C15, RN-C08)", () => {
+  const p = secretsProject();
+  const hardlink = join(p.dir, "src", "dup.ts");
+  linkSync(join(p.dir, ".env.local"), join(p.dir, "enlace.txt"));
+  const outside = join(tempDir("hl-outside-"), "ext.txt");
+  writeFileSync(outside, "ext");
+  linkSync(outside, join(p.dir, "externo-hl.txt"));
+  linkSync(join(p.dir, "src", "page.tsx"), hardlink);
+  const run = (agent_type, tool_name, tool_input) => secretsOf(p, agent_type, tool_name, tool_input).code;
+  assert.equal(run("product", "Read", { file_path: "enlace.txt" }), 2, "hard link to .env.local");
+  assert.equal(run("product", "Read", { file_path: "externo-hl.txt" }), 2, "hard link to an external file");
+  assert.equal(mentionOf(p, "product", "mira @enlace.txt").code, 2, "@hardlink");
+  assert.equal(run("product", "Grep", { pattern: "x", path: "src", type: "ts" }), 2, "dir with a hard link");
+  assert.equal(run("product", "Grep", { pattern: "x", path: "src/dup.ts", type: "ts" }), 2, "hard-linked file as path");
+  for (const agent_type of ["developer", "orchestrator"]) {
+    assert.equal(run(agent_type, "Read", { file_path: "enlace.txt" }), 0, agent_type);
+    assert.equal(run(agent_type, "Grep", { pattern: "x", path: "src", type: "ts" }), 0, agent_type);
+  }
+  // limit: 5000 files pass, 5001 block; .git, node_modules and .next are skipped
+  const big = join(p.dir, "big");
+  mkdirSync(big);
+  for (let i = 0; i < 5000; i++) writeFileSync(join(big, `f${i}.ts`), "");
+  mkdirSync(join(big, "node_modules"));
+  writeFileSync(join(big, "node_modules", "skipped.ts"), "");
+  assert.equal(run("product", "Grep", { pattern: "x", path: "big", type: "ts" }), 0, "5000 files");
+  writeFileSync(join(big, "extra.ts"), "");
+  assert.equal(run("product", "Grep", { pattern: "x", path: "big", type: "ts" }), 2, "over 5000 files");
+});
+
+test("product Bash: git grep/diff/blame block hard links in their scope (L10, AC-C15)", () => {
+  const p = secretsProject();
+  writeFileSync(join(p.dir, "innocent.txt"), "SYNTH");
+  linkSync(join(p.dir, "innocent.txt"), join(p.dir, "src", "dup.ts"));
+  const bash = (command) => productBash(p, command).code;
+  const nx = "--no-ext-diff --no-textconv";
+  const blocked = [
+    "git grep -n -e SYNTH -- innocent.txt", "git grep -n -e SYNTH -- .", "git grep -n -e SYNTH -- src",
+    `git diff ${nx}`, `git diff ${nx} -- innocent.txt`, `git diff ${nx} -- .`, `git diff --stat ${nx}`, `git diff --name-only ${nx}`,
+    `git diff HEAD ${nx}`, `git diff HEAD~1 ${nx}`, `git diff HEAD~1..HEAD ${nx}`,
+    "git blame -- innocent.txt", "git blame HEAD -- innocent.txt", "git blame -L 1,2 HEAD~1 -- innocent.txt",
+    `git diff --cached ${nx}`, `git diff --staged ${nx}`,
+  ];
+  for (const command of blocked) assert.equal(bash(command), 2, command);
+  assert.match(productBash(p, "git grep -n -e SYNTH -- innocent.txt").out, /enlace duro/);
+  // scope matters: a link under src/ does not block other paths; node_modules is skipped
+  assert.equal(bash(`git diff ${nx} -- README.md`), 0);
+  assert.equal(bash("git grep -n -e x -- config"), 0);
+  assert.equal(bash("git blame -- README.md"), 0);
+  // outside the vector or without file content: unchanged
+  for (const command of ["git log -p --no-ext-diff --no-textconv", "git show --no-ext-diff --no-textconv HEAD:innocent.txt", "git status", "git ls-files", "git log -- innocent.txt"]) {
+    assert.equal(bash(command), 0, command);
+  }
+  for (const agent_type of ["developer", "orchestrator"]) {
+    assert.equal(p.run("relay", { agent_type, tool_name: "Bash", tool_input: { command: "git grep -n -e SYNTH -- ." } }).code, 0, agent_type);
+  }
+  // no hard links: diff of the whole repo passes
+  const q = secretsProject();
+  assert.equal(productBash(q, `git diff ${nx}`).code, 0);
+  assert.equal(productBash(q, "git grep -n -e x -- .").code, 0);
+  mkdirSync(join(q.dir, "node_modules"));
+  writeFileSync(join(q.dir, "node_modules", "a.txt"), "x");
+  linkSync(join(q.dir, "node_modules", "a.txt"), join(q.dir, "node_modules", "b.txt"));
+  assert.equal(productBash(q, `git diff ${nx}`).code, 0, "node_modules skipped");
+  // fail-closed: over 5000 files
+  const big = join(q.dir, "big");
+  mkdirSync(big);
+  for (let i = 0; i < 5001; i++) writeFileSync(join(big, `f${i}.txt`), "");
+  assert.equal(productBash(q, "git grep -n -e x -- big").code, 2, "5001 files");
+  assert.equal(productBash(q, `git diff ${nx}`).code, 2, "5001 files, whole repo");
+});
+
+// AC-C21: el adaptador no contradice el contrato (card por paso, acciones tras CADA paso)
+test("AC-C21: adaptador product.md alineado con el contrato de card por paso", () => {
+  const root = join(import.meta.dirname, "../..");
+  const adapter = readFileSync(join(root, ".claude/agents/product.md"), "utf8");
+  const contract = readFileSync(join(root, "docs/uat/product-agent.md"), "utf8");
+  assert.match(adapter, /por paso/);
+  assert.doesNotMatch(adapter, /requiere terminal/);
+  assert.doesNotMatch(adapter, /No avances hasta cerrar el caso/);
+  assert.match(adapter, /incluida la primera/);
+  assert.match(adapter, /mismo mensaje/);
+  assert.match(adapter, /Paso n de m/);
+  assert.match(adapter, /1 continuar/);
+  assert.match(adapter, /2 repetir/);
+  assert.match(adapter, /3 registrar/);
+  assert.match(contract, /después de CADA paso/);
+  assert.match(contract, /Paso n de m/);
+  assert.match(contract, /1 continuar/);
+  assert.match(contract, /2 repetir/);
+  assert.match(contract, /3 registrar/);
+});
+
+// DEMO-ADJ-01: en PowerShell 5.1 la card no usa parámetros/operadores exclusivos de PowerShell 7
+test("DEMO-ADJ-01: contrato prohíbe sintaxis PowerShell 7 en cards de PowerShell 5.1", () => {
+  const root = join(import.meta.dirname, "../..");
+  const contract = readFileSync(join(root, "docs/uat/product-agent.md"), "utf8");
+  assert.match(contract, /PowerShell 5\.1[^\n]*-StatusCodeVariable/);
+  for (const t of ["-SkipHttpErrorCheck", "-SkipCertificateCheck", "-ResponseHeadersVariable", "?:", "??"]) {
+    assert.ok(contract.includes(t), `falta ${t}`);
+  }
+  assert.match(contract, /Invoke-WebRequest -UseBasicParsing[^\n]*\.StatusCode/);
 });

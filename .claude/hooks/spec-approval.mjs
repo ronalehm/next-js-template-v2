@@ -20,8 +20,10 @@
 //   guard (PreToolUse Write|Edit|NotebookEdit): governance files need a privileged authorization, sensitive files
 //     need an approved spec listing them in `## Archivos sensibles`, specs are only written as `Estado: borrador`.
 //   relay (PreToolUse on tools that deliver prompts): blocks sending an approval command as if the user typed it.
+//   product Bash (relay): product's only shell is the C1 allowlist (productCommand: positive grammar, git by subcommand, curl gate).
+//   secrets (PreToolUse Read|Glob|Grep, UserPromptSubmit): product stays inside the repo and away from secret paths; other agents exit 0.
 // Exit 2 = block, stderr is the reason. Fails closed.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { execFileSync, execSync } from "node:child_process";
@@ -37,6 +39,8 @@ function block(reason) {
 
 const SPECS = "docs/specs";
 const input = JSON.parse(readFileSync(0, "utf8"));
+// secrets runs on every Read/Glob/Grep and prompt of every agent: anyone but product leaves before any path or git work.
+if (process.argv[2] === "secrets" && input.agent_type !== "product") process.exit(0);
 
 function gitRoot(cwd) {
   try {
@@ -59,7 +63,7 @@ const IMPLEMENTS_NOTHING = new Set(["spec", "reviewer", "Explore", "Plan"]);
 // No agent edits these, not even with a privileged authorization.
 const NEVER = /(^|\/)(docs\/specs\/approvals\.jsonl|spec-approval\.key|spec-privileged\.jsonl|spec-allowed-signers|\.ssh\/.*|\.git(\/.*)?)$/i;
 const GOVERNANCE =
-  /(^|\/)(\.claude\/(?!plans\/|projects\/|worktrees\/)|CLAUDE(\.local)?\.md$|AGENTS\.md$|\.mcp\.json$|docs\/SETUP\.md$)/i;
+  /(^|\/)(\.claude\/(?!plans\/|projects\/|worktrees\/)|CLAUDE(\.local)?\.md$|AGENTS\.md$|\.mcp\.json$|docs\/SETUP\.md$|docs\/uat\/)/i;
 const SENSITIVE =
   /(^|\/)(\.env(?!\.example$)[^/]*$|\.github\/workflows\/|db\/|migrations\/|prisma\/|drizzle\/|(proxy|middleware)\.[cm]?[jt]sx?$|scripts\/db-[^/]*$)|^(src\/)?(app|modules|components|hooks|lib)\/(.*\/)?[^/]*auth(?!or(?!i[sz]))|^(src\/)?lib\/(roles|db)/i;
 const SPEC_FILE = /(^|\/)docs\/specs\/[^/]+\.md$/i;
@@ -477,9 +481,292 @@ function developer() {
   }
 }
 
-// product (PreToolUse inside the product agent): read-only. Whatever tool reaches this hook is blocked.
+// product (PreToolUse inside the product agent): read-only. Whatever tool reaches this hook is blocked,
+// except Bash, which relay() sends through productCommand().
 function product() {
   block(`el agente product es de solo lectura (${input.tool_name ?? "herramienta"}); el registro lo escribe un developer en Modo: build.`);
+}
+
+const MSG = {
+  grammar: "el comando no encaja en la gramática positiva de product (RN-C07): un solo comando simple, sin encadenado, redirección, expansión ni comillas fuera de lugar. Prohibido para todos en el flujo UAT (C4).",
+  forbidden: "comando fuera de la allowlist C1 de product (RN-C02, RN-C05): prohibido para todos en el flujo UAT (C3b/C4).",
+  producer: "este paso lo ejecuta Producto (ASISTIDA) o el Developer dentro del EUA verificado; product solo propone el comando (C2/C3a).",
+  secret: "la ruta es secreta (regla de secretos, RN-C08): prohibido para todos en el flujo UAT.",
+  hardlink: "archivo con más de un enlace duro (nlink > 1): no se puede acreditar que no apunte a un secreto (RN-C08); prohibido para product.",
+  toobig: "el directorio supera el límite de 5000 archivos admitidos para Grep (RN-C08): acota la ruta.",
+  outside: "la ruta queda fuera del repositorio (confinamiento, RN-C08): prohibido para product.",
+};
+
+// Paths that never reach product: initial list of RN-C08, tested on repo-relative paths. .env.example/.sample/.template are fine.
+const SECRET =
+  /(^|\/)(\.env(?!\.(example|sample|template)$)[^/]*$|[^/]*\.(pem|key|p12|pfx)$|id_rsa[^/]*$|id_ed25519[^/]*$|\.ssh(\/|$)|\.npmrc$|\.netrc$|\.git-credentials$|\.docker\/config\.json$|\.mcp\.json$|\.claude\/settings\.local\.json$|\.vercel(\/|$)|credentials[^/]*\.json$|spec-approval\.key$|spec-privileged\.jsonl$|\.git(\/|$))/i;
+const expandHome = (path) => (path === "~" || /^~[\\/]/.test(path) ? join(homedir(), path.slice(2)) : path);
+const insideRel = (rel) => rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel);
+
+// "secret" | "outside" | null. Reuses withoutAliases/canonical/realPath, so Windows aliases and links resolve before checking.
+function pathProblem(path) {
+  const abs = canonical(expandHome(path));
+  const real = realPath(abs);
+  const rels = [relative(root, abs), relative(realPath(root), real)].map(slashes);
+  if (!insideRel(rels[1])) return "outside";
+  return rels.filter(insideRel).some((rel) => SECRET.test(rel)) ? "secret" : null;
+}
+
+// Bash grammar: one line, single spaces, unquoted tokens from a closed set or whole single-quoted tokens. Null if it does not fit.
+const UNQUOTED = /^[A-Za-z0-9._/:=@,+%~^-]+$/;
+function tokenize(text) {
+  if (typeof text !== "string" || !/^[\x20-\x7e]+$/.test(text)) return null;
+  const tokens = [];
+  for (let i = 0; i < text.length; ) {
+    let value;
+    const quoted = text[i] === "'";
+    if (quoted) {
+      const end = text.indexOf("'", i + 1);
+      value = end < 0 ? "" : text.slice(i + 1, end);
+      if (end < 0 || !value || value.includes("\\")) return null;
+      i = end + 1;
+    } else {
+      const end = text.indexOf(" ", i);
+      value = text.slice(i, end < 0 ? undefined : end);
+      if (!UNQUOTED.test(value)) return null;
+      i += value.length;
+    }
+    tokens.push({ value, quoted });
+    if (i < text.length && (text[i] !== " " || ++i >= text.length)) return null;
+  }
+  return tokens;
+}
+
+const PATH_TOKEN = /^[A-Za-z0-9._/-]+$/;
+const REV = /^(?:HEAD|[0-9a-fA-F]{7,40}|[A-Za-z0-9_][A-Za-z0-9._/-]*)(?:[~^]\d{0,3})*$/;
+const isN = (t) => !t.quoted && /^\d{1,4}$/.test(t.value);
+const isLines = (t) => !t.quoted && /^\d{1,5},\d{1,5}$/.test(t.value);
+// Validators return null when fine, otherwise "deny" (grammar) or "secret"/"outside".
+const pathArg = (value) =>
+  !PATH_TOKEN.test(value) || /^[-/]/.test(value) || value.split("/").includes("..") ? "deny" : pathProblem(value);
+// A rev token can also name a file for git, so its base is checked against the secret list too.
+const rev = (value) => {
+  if (!REV.test(value) || value.includes("..")) return "deny";
+  return SECRET.test(value.replace(/[~^]\d{0,3}.*$/, "")) ? "secret" : null;
+};
+const revArg = (t) => (t.quoted ? "deny" : rev(t.value));
+const diffArg = (t) => {
+  if (t.quoted) return "deny";
+  if (!t.value.includes("..")) return rev(t.value);
+  const parts = t.value.split("..");
+  return t.value.includes("...") || parts.length !== 2 ? "deny" : rev(parts[0]) || rev(parts[1]);
+};
+const showArg = (t) => {
+  if (t.quoted) return "deny";
+  const [head, ...rest] = t.value.split(":");
+  return rest.length === 0 ? rev(head) : rest.length > 1 ? "deny" : rev(head) || pathArg(rest[0]);
+};
+const NO_EXT = ["--no-ext-diff", "--no-textconv"];
+
+// Positive git allowlist by subcommand (RN-C07): exact tokens only, nothing abbreviated or combined.
+const GIT = {
+  log: { flags: ["--oneline", "--stat", "--name-only", "--name-status", "-p", ...NO_EXT], valued: { "-n": isN }, arg: revArg, paths: true },
+  show: { flags: ["--stat", "--name-only", ...NO_EXT], need: NO_EXT, arg: showArg },
+  diff: { flags: ["--stat", "--name-only", "--name-status", ...NO_EXT], need: NO_EXT, arg: diffArg, paths: true },
+  status: { flags: ["--short", "-s", "--porcelain"] },
+  "ls-files": { paths: true },
+  "rev-parse": { flags: ["--short", "--abbrev-ref", "--show-toplevel"], arg: (t) => (!t.quoted && t.value === "HEAD" ? null : "deny") },
+  branch: { flags: ["--list", "--show-current"] },
+  blame: { valued: { "-L": isLines }, arg: revArg, paths: true, onePath: true, needPaths: true },
+  grep: { flags: ["-n", "-i", "-w", "-l", "-c"], valued: { "-e": () => true }, need: ["-e"], paths: true, needPaths: true },
+};
+
+function gitProblem(tokens) {
+  // Object.hasOwn: tokens like "constructor" or "__proto__" must not resolve to inherited properties.
+  const spec = tokens[0] && !tokens[0].quoted && Object.hasOwn(GIT, tokens[0].value) ? GIT[tokens[0].value] : undefined;
+  if (!spec) return "deny";
+  const seen = new Set();
+  let args = 0;
+  for (let i = 1; i < tokens.length; i++) {
+    const { value, quoted } = tokens[i];
+    if (!quoted && value === "--") {
+      const paths = tokens.slice(i + 1);
+      if (!spec.paths || paths.length === 0 || (spec.onePath && paths.length !== 1)) return "deny";
+      const found = paths.map((t) => (t.quoted ? "deny" : pathArg(t.value)));
+      seen.add("--");
+      return found.find((p) => p === "deny") ?? found.find(Boolean) ?? finish();
+    }
+    if (!quoted && spec.flags?.includes(value)) seen.add(value);
+    else if (!quoted && spec.valued && Object.hasOwn(spec.valued, value)) {
+      const next = tokens[++i];
+      if (!next || !spec.valued[value](next)) return "deny";
+      seen.add(value);
+    } else if (quoted || value.startsWith("-") || !spec.arg || args++ > 0) return "deny";
+    else {
+      const problem = spec.arg(tokens[i]);
+      if (problem) return problem;
+    }
+  }
+  return finish();
+
+  function finish() {
+    const needs = [...(spec.need ?? []), ...(seen.has("-p") ? NO_EXT : []), ...(spec.needPaths ? ["--"] : [])];
+    return needs.every((flag) => seen.has(flag)) ? null : "deny";
+  }
+}
+
+const LOOPBACK = /^(127\.0\.0\.1|localhost)$/;
+// curl against the isolated UAT target only: closed options, one http:// URL listed in PRODUCT_UAT_HTTP_TARGETS, no inherited config or proxy.
+function curlAllowed(tokens) {
+  if (tokens[0]?.value !== "-q" || tokens[0].quoted) return false;
+  const targets = (process.env.PRODUCT_UAT_HTTP_TARGETS ?? "").split(/[\s,;]+/).filter(Boolean);
+  const noproxy = [];
+  let url;
+  for (let i = 1; i < tokens.length; i++) {
+    const { value, quoted } = tokens[i];
+    const next = () => tokens[++i];
+    if (/^http:\/\//.test(value)) {
+      if (url) return false;
+      url = value;
+    } else if (quoted) return false;
+    else if (["-s", "-S", "-i", "-I"].includes(value)) continue;
+    else if (value === "--noproxy") {
+      const host = next();
+      if (!host || host.quoted) return false;
+      noproxy.push(host.value);
+    } else if (value === "--max-time") {
+      const seconds = next();
+      if (!seconds || seconds.quoted || !/^\d{1,4}$/.test(seconds.value)) return false;
+    } else if (value === "-H") {
+      const header = next();
+      if (!header || !header.quoted || !/^Accept: \S.*$/.test(header.value)) return false;
+    } else return false;
+  }
+  const match = url?.match(/^http:\/\/([A-Za-z0-9.-]+):(\d{1,5})(\/[^\[\]{}\\]*)?$/);
+  return Boolean(match) && LOOPBACK.test(match[1]) && noproxy.length === 1 && noproxy[0] === match[1] && targets.includes(`${match[1]}:${match[2]}`);
+}
+
+const PRODUCER = /^(vitest|playwright)$/;
+const WRITES = /^(-X|--request|-d|--data.*|-F|--form|-T|--upload-file)$/;
+// C2/C3a are run by Producto or a Developer; everything else outside C1 is forbidden for everyone.
+function refusal(tokens) {
+  const [program, ...args] = tokens.map((t) => t.value);
+  const runsTests = PRODUCER.test(program) || (/^(npx|pnpm|yarn)$/.test(program) && args.some((a) => PRODUCER.test(a)));
+  return runsTests || (program === "curl" && args.some((a) => WRITES.test(a))) ? MSG.producer : MSG.forbidden;
+}
+
+// product's Bash: denied unless the whole command fits the C1 allowlist (RN-C02, RN-C05..C07). Never prints the command.
+function productCommand() {
+  const tokens = tokenize(input.tool_input?.command);
+  if (!tokens) block(MSG.grammar);
+  const [program, ...args] = tokens;
+  if (program.quoted) block(MSG.grammar);
+  let problem = "deny";
+  if (program.value === "git") problem = gitProblem(args) || gitLinkProblem(args);
+  else if (/^(node|npm)$/.test(program.value) && args.length === 1 && args[0].value === "--version" && !args[0].quoted) problem = null;
+  else if (program.value === "curl" && curlAllowed(args)) problem = null;
+  if (problem) block(problem === "deny" ? refusal(tokens) : MSG[problem]);
+}
+
+// secrets (PreToolUse Read|Glob|Grep and UserPromptSubmit): product stays inside the repo and away from secret paths.
+const SECRET_NAMES = [".env", ".env.local", ".env.production", "a.pem", "a.key", "a.p12", "a.pfx", "id_rsa", "id_rsa.pub", "id_ed25519", ".npmrc", ".netrc", ".git-credentials", "credentials.json", ".mcp.json", "settings.local.json", "spec-approval.key", "spec-privileged.jsonl"];
+const GLOB_META = /[*?[\]{}]/;
+const globRegex = (segment) =>
+  new RegExp(`^${segment.replace(/[.+^$()|\\]/g, "\\$&").replace(/\*+/g, ".*").replace(/\?/g, ".").replace(/\{([^}]*)\}/g, (_, a) => `(${a.replace(/,/g, "|")})`)}$`, "i");
+
+function globProblem(pattern, base) {
+  const full = expandHome(slashes(pattern));
+  const segments = full.split("/");
+  const firstMeta = segments.findIndex((s) => GLOB_META.test(s));
+  const fixed = (firstMeta < 0 ? segments : segments.slice(0, firstMeta)).join("/");
+  if (firstMeta >= 0 && segments.slice(firstMeta).includes("..")) return "outside";
+  const absolute = isAbsolute(full) || /^[a-z]:/i.test(full) || full.startsWith("//");
+  const rootProblem = pathProblem(absolute ? fixed || "/" : join(base ?? ".", fixed));
+  if (rootProblem || firstMeta < 0) return rootProblem;
+  const last = segments.at(-1);
+  const hidden = segments.slice(0, -1).some((s) => /^\.(ssh|git|vercel|docker)$/i.test(s));
+  const matches = GLOB_META.test(last) ? SECRET_NAMES.some((name) => globRegex(last).test(name)) : SECRET.test(last);
+  return hidden || matches ? "secret" : null;
+}
+
+// Hard links hide a secret behind an innocent name. Files only; .git/, node_modules/ and .next/ are skipped; over the limit fails closed.
+const MAX_GREP_FILES = 5000;
+const SKIP_DIRS = new Set([".git", "node_modules", ".next"]);
+const hardLinked = (file) => {
+  try {
+    const st = statSync(file);
+    return st.isFile() && st.nlink > 1; // directories have nlink >= 2 on Linux/WSL2
+  } catch (e) {
+    return e.code !== "ENOENT"; // missing path: nothing to expose; any other error fails closed
+  }
+};
+function linkProblem(path) {
+  const real = realPath(canonical(expandHome(path)));
+  let seen = 0;
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(e.name) && (problem = walk(full))) return problem;
+      } else if (e.isFile()) {
+        if (++seen > MAX_GREP_FILES) return "toobig";
+        if (lstatSync(full).nlink > 1) return "hardlink";
+      }
+    }
+    return null;
+  };
+  let problem = null;
+  try {
+    return lstatSync(real).isDirectory() ? walk(real) : hardLinked(real) ? "hardlink" : null;
+  } catch (e) {
+    return e.code === "ENOENT" ? null : "deny"; // missing path: nothing to expose
+  }
+}
+
+// L10: git grep/diff/blame read the working tree, so a hard link with an innocent name could leak a secret.
+// Scope = pathspecs after "--", else the whole repo (diff without pathspec). No type/glob filter. Runs only after gitProblem() passed.
+function gitLinkProblem(tokens) {
+  if (!["grep", "diff", "blame"].includes(tokens[0].value)) return null;
+  const dd = tokens.findIndex((t) => !t.quoted && t.value === "--");
+  const scope = dd < 0 ? [root] : tokens.slice(dd + 1).map((t) => t.value);
+  for (const path of scope) {
+    const problem = linkProblem(path);
+    if (problem) return problem;
+  }
+  return null;
+}
+
+const GREP_TYPES =["ts", "js", "md", "css", "html"];
+const GREP_GLOB = /^(\*\*\/)?\*\.(ts|tsx|js|jsx|mjs|cjs|md|mdx|css|html)$/;
+
+function readProblem(tool, ti) {
+  if (tool === "Read") return typeof ti.file_path === "string" && ti.file_path ? pathProblem(ti.file_path) || (hardLinked(realPath(canonical(expandHome(ti.file_path)))) ? "hardlink" : null) : "deny";
+  if (tool === "Glob") {
+    if (typeof ti.pattern !== "string" || !ti.pattern || (ti.path !== undefined && typeof ti.path !== "string")) return "deny";
+    return (ti.path && pathProblem(ti.path)) || globProblem(ti.pattern, ti.path);
+  }
+  if (tool === "Grep") {
+    const { path, type, glob } = ti;
+    if (typeof path !== "string" || !path || (type === undefined && glob === undefined)) return "deny";
+    if (type !== undefined && !GREP_TYPES.includes(type)) return "deny";
+    if (glob !== undefined && !(typeof glob === "string" && GREP_GLOB.test(glob))) return "deny";
+    return pathProblem(path) || linkProblem(path);
+  }
+  return null;
+}
+
+// Mentions look like "@path" at a word start, or @"path with spaces". Directories only list names, so they are fine.
+function mentions(prompt) {
+  return [...String(prompt).matchAll(/(?:^|\s)@(?:"([^"]+)"|(\S+))/g)].map((m) =>
+    (m[1] ?? m[2]).replace(/[,;:!?)\]"'>]+$/, "").replace(/#.*$/, ""),
+  );
+}
+
+function secrets() {
+  const event = input.hook_event_name;
+  const problems =
+    event === "PreToolUse"
+      ? [readProblem(input.tool_name, input.tool_input ?? {})]
+      : event === "UserPromptSubmit"
+        ? mentions(input.prompt ?? "").map((path) => (path ? pathProblem(path) || (hardLinked(realPath(canonical(expandHome(path)))) ? "hardlink" : null) : null))
+        : ["deny"];
+  const problem = problems.find(Boolean);
+  if (problem) block(problem === "deny" ? "consulta de product fuera de la lista cerrada (RN-C08): prohibido en el flujo UAT." : MSG[problem]);
 }
 
 // orchestrator (PreToolUse Edit inside the orchestrator): its only edits are the plan checkboxes of a spec.
@@ -496,7 +783,8 @@ const strings = (value) =>
 // ponytail: stops the literal command only; encoded or concatenated text passes. Declared as residual risk.
 function relay() {
   if (input.agent_type === "developer") developer();
-  if (input.agent_type === "product") product();
+  if (input.agent_type === "product" && input.tool_name === "Bash") productCommand();
+  else if (input.agent_type === "product") product();
   const values = strings(input.tool_input);
   const command = (text) => APPROVE.test(text.trim()) || AUTHORIZE.test(text.trim());
   const launchesClaude = (text) =>
@@ -524,6 +812,7 @@ function printStatement() {
   process.stdout.write(govStatement(entry));
 }
 
-const mode = { record, gate, guard, developer, orchestrator, relay, statement: printStatement }[process.argv[2]];
+const MODES = { record, gate, guard, developer, orchestrator, relay, secrets, statement: printStatement };
+const mode = Object.hasOwn(MODES, process.argv[2]) ? MODES[process.argv[2]] : undefined;
 if (!mode) block(`modo desconocido "${process.argv[2]}".`);
 mode();
