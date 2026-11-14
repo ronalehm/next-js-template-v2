@@ -31,6 +31,7 @@ Read `docs/SETUP.md` before writing code. It is the source of truth for:
 | Agent | Role |
 |---|---|
 | `orchestrator` | Classifies each request as READ-ONLY, BUILD, SDD-LITE or SDD-ADVANCED (see `docs/SETUP.md` §3); plans, delegates, runs tasks in parallel when files don't overlap. Never writes code. |
+| `product` | Functional UAT validator, ASISTIDA mode (`tools: Read, Glob, Grep, Bash`; `Bash` limited to a read-only allowlist enforced by the hook). Runs only as the main agent, Claude Code only: `claude --agent product`. Guides tests, records results, prepares the evidence package; never writes files or publishes to GitHub/Linear. Behavior and command catalog: single source `docs/uat/product-agent.md`. |
 | `spec` | Writes `docs/specs/<module>-<feature>.md` with a task plan (≤ 5 tasks / ~15 files per phase). Never approves specs. |
 | `developer` | Implements an approved spec task or a build-mode change, with tests. Checks `Estado: aprobado` before touching files; never modifies `docs/specs/` (enforced by a hook in its frontmatter). |
 | `reviewer` | Doesn't edit files. Validates against the spec/task and `docs/SETUP.md`, including governance changes in the real diff; returns APROBADO, numbered OBSERVACIONES or BLOQUEADO, looping with `developer` (max 3 cycles). |

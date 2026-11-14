@@ -37,9 +37,28 @@
             "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-approval.mjs\" record"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-approval.mjs\" secrets",
+            "onFailure": "block"
+          }
+        ]
       }
     ],
     "PreToolUse": [
+      {
+        "matcher": "Read|Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-approval.mjs\" secrets",
+            "onFailure": "block"
+          }
+        ]
+      },
       {
         "matcher": "Agent",
         "hooks": [
