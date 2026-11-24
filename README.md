@@ -1,131 +1,128 @@
-# next-js-template
+# Template V2 PRO
 
-Plantilla base para los proyectos de Ronald: Next.js 16 con una estructura modular por dominio y un flujo de desarrollo con agentes de Claude Code basado en **SDD (Spec Driven Development)**, con aprobación humana obligatoria.
+Plantilla base reutilizable para proyectos independientes desarrollados con Next.js, Clerk, Neon y un flujo de trabajo gobernado por **SDD (Spec Driven Development)** y **ODD-LIGHT**. El repositorio de la plantilla no es una aplicación de producción: cada derivado debe mantener identidad, repositorio, credenciales, base de datos y despliegue propios.
 
-## Stack
+## Arquitectura de reutilización
+
+```text
+Template V2 PRO (código base y gobierno de desarrollo)
+  ├── AppMADRE        → Git, Clerk, Neon y Vercel propios
+  ├── CRM-IA          → Git, Clerk, Neon y Vercel propios
+  └── Proyecto futuro → Git, Clerk, Neon y Vercel propios
+```
+
+**No reutilizar secretos, conexiones, usuarios administrativos ni firmas locales del origen.** Las aprobaciones y autorizaciones de SDD son específicas de la raíz del proyecto, la fase y la firma del aprobador; no se heredan como permisos válidos de un derivado.
+
+## Tecnologías
 
 | Área | Tecnología |
-|---|---|
-| Framework | Next.js 16 (App Router, Turbopack), React 19, TypeScript strict |
-| Estilos | Tailwind CSS v4 (tema en `app/globals.css`, sin `tailwind.config`) |
-| UI | shadcn/ui (estilo `base-nova`, sobre Base UI) + `lucide-react` |
-| Datos | axios, TanStack Query, TanStack Table |
-| Validación y estado | zod, zustand |
-| Tests | Vitest + Testing Library (jsdom) |
+| --- | --- |
+| Framework | Next.js 16 (App Router), React 19, TypeScript strict |
+| Interfaz | Tailwind CSS v4, shadcn/ui (`base-nova`, Base UI), lucide-react |
+| Datos y estado | axios, TanStack Query, TanStack Table, zod, zustand |
+| Autenticación | Clerk |
+| Persistencia | Neon PostgreSQL |
+| Pruebas | Vitest, Testing Library y CI de GitHub Actions |
 
-Requisitos: **Node.js 26 LTS (Lithium)** y npm. Se utiliza el último parche estable disponible de la rama `26.x`. Para Linux autoalojado, verifica que la distribución tenga `libatomic` instalado si lo exige el binario de Node 26.
+**Requisitos:** Node.js 26.x y npm; `.nvmrc`, `.node-version` y `engines.node` declaran la rama 26. En Windows, utiliza un gestor de versiones compatible con Windows; `nvm` de Linux/macOS no tiene por qué usar los mismos comandos.
 
-## Inicio rápido
+## Comenzar un proyecto nuevo
 
-```sh
-git clone https://github.com/ronalehm/next-js-template-v2.git mi-proyecto
-cd mi-proyecto
-nvm install 26      # nvm obtiene el último parche estable de Node 26
-nvm use 26
+1. **Crear el derivado independiente.** Aplicar el procedimiento validado de Bootstrap B1 o el agente de replicación autorizado por el propietario. Este README no reemplaza el manual B1. Comprobar identidad propia y repositorio Git independiente **antes de enlazar un remoto de proyecto**. Atención: `git clone https://github.com/ronalehm/next-js-template-v2.git` por sí solo conserva el historial y configura `origin` hacia la plantilla; no completa el aislamiento del derivado.
+2. **Preparar el entorno aislado.** Crear una instancia de Clerk Development y un proyecto o rama Neon destinados exclusivamente al derivado. No reutilizar recursos ni datos del repositorio origen ni de otros proyectos.
+3. **Configurar y validar.** Seguir [`docs/INSTALACION.md`](docs/INSTALACION.md) para `.env.local`, destinos efectivos, migraciones y primer superadministrador.
+4. **Verificar.** Ejecutar las comprobaciones funcionales, documentar los resultados y aprobar las operaciones sensibles conforme a [`docs/SETUP.md`](docs/SETUP.md).
+5. **Desarrollar con PR.** Utilizar la rama propia del proyecto y el flujo Reviewer → CI → revisión humana. Cada derivado decide y documenta su propio despliegue y gobierno.
+
+**Nota de documentación:** el manual B1 v1.2 y el agente de replicación fueron comunicados como validados por el propietario, pero sus archivos/versiones aún deben incorporarse o referenciarse mediante una ubicación estable antes de declarar completo el paquete documental de entrega.
+
+## Arranque de una copia ya independizada
+
+```bash
 npm ci --ignore-scripts
-npm run dev        # http://localhost:3000
+# Configurar .env.local a partir de .env.example y cotejar los destinos efectivos
+# Los siguientes comandos se ejecutan únicamente sobre recursos aislados y autorizados:
+# npm run db:migrate
+# npm run db:grant-superadmin -- admin-de-prueba@ejemplo.com
+npm run dev  # http://localhost:3000
 ```
 
-La versión de Node usada en desarrollo está declarada en `.nvmrc` y `.node-version` (rama 26). GitHub Actions ejecuta CI sobre Node 26 y `package.json` exige `26.x`. En Windows, usa un gestor compatible con tu instalación (por ejemplo, nvm-windows o Volta) para instalar la versión 26 LTS; el comando `nvm use 26` mostrado arriba corresponde a nvm en Linux/macOS. Si despliegas en Vercel, `engines.node` fija el runtime en Node 26.
+La instalación con `--ignore-scripts` está documentada para las dependencias de esta plantilla; los derivados que añadan paquetes pueden requerir otro procedimiento. El build necesita las `devDependencies`. Para la preparación completa consulta [`docs/INSTALACION.md`](docs/INSTALACION.md), no ejecutes migraciones basándote únicamente en este bloque.
 
-### Instalación sin scripts (recomendada para esta plantilla)
+## Comandos disponibles
 
-Para instalar exactamente el lockfile sin ejecutar los scripts de instalación de las dependencias:
-
-```sh
-npm ci --ignore-scripts
-```
-
-En esta plantilla basta: los binarios nativos (por ejemplo `@unrs/resolver-binding-*`, que usa ESLint) llegan como dependencias opcionales fijadas en el lockfile, y lint, tests y build pasan así (ver [`docs/evidence/template-v2-dependency-security.md`](docs/evidence/template-v2-dependency-security.md)). Es una recomendación, no una regla: los proyectos derivados pueden necesitar scripts de otras dependencias, y no se impone con `.npmrc`.
-
-El build necesita las `devDependencies` (por ejemplo `shadcn`, que aporta `shadcn/tailwind.css` al compilar). `npm ci` y Vercel las instalan por defecto.
-
-## Comandos
-
-| Comando | Qué hace |
-|---|---|
-| `npm run dev` | Servidor de desarrollo |
-| `npm run build` | Build de producción (también hace la comprobación de tipos completa) |
-| `npm run start` | Sirve el build de producción |
+| Comando | Función |
+| --- | --- |
+| `npm run dev` | Servidor local |
+| `npm run build` | Compilación y comprobación de tipos |
+| `npm run start` | Ejecutar el build |
 | `npm run lint` | ESLint |
+| `npx vitest run` | Pruebas una vez |
 | `npm test` | Vitest en modo watch |
-| `npx vitest run [ruta]` | Ejecuta los tests una vez (todo, un módulo o un archivo) |
 | `npx shadcn@latest add <componente>` | Añade un componente de shadcn/ui a `components/ui/` |
+| `npm run db:migrate` | Aplica migraciones pendientes al destino configurado; requiere verificación y autorización |
+| `npm run db:grant-superadmin -- <correo>` | Concede rol inicial en el destino configurado; requiere verificación y autorización |
 
 ## Estructura
 
+```text
+app/                    Rutas Next.js
+components/ui/          Componentes base
+components/shared/      Componentes reutilizables
+hooks/                  Hooks compartidos
+lib/                    Utilidades y acceso global
+modules/<dominio>/       Código de dominio
+db/migrations/          Migraciones SQL
+scripts/                 Scripts de operación
+docs/SETUP.md            Fuente normativa de desarrollo y gobierno
+docs/INSTALACION.md      Guía funcional complementaria
+docs/specs/             Especificaciones SDD y evidencia histórica
+.claude/agents/          Agentes del flujo de trabajo
+.claude/hooks/           Controles técnicos de aprobación
+.github/workflows/       CI de PR
 ```
-app/              # solo rutas (App Router)
-components/
-  ui/             # componentes de shadcn/ui
-  shared/         # componentes reutilizables entre dominios
-hooks/            # hooks reutilizables entre dominios
-lib/              # utilidades globales (cliente axios, utils)
-modules/<dominio>/  # código de negocio: components, hooks, services, schemas, stores, types
-docs/
-  SETUP.md        # reglas del proyecto
-  specs/          # especificaciones SDD
-.claude/
-  agents/         # agentes orchestrator, spec, developer, reviewer
-  hooks/          # hooks de aprobación de specs
-```
 
-Las reglas completas (estructura, nombres, SOLID/DRY/KISS/YAGNI, qué lleva tests) están en [`docs/SETUP.md`](docs/SETUP.md). Léelo antes de escribir código.
+## SDD/ODD y cinco agentes
 
-## Flujo de trabajo con Claude Code
+La fuente de verdad de rutas, permisos y autorizaciones es [`docs/SETUP.md`](docs/SETUP.md). Existen **cinco** agentes:
 
-El proyecto incluye 4 agentes en `.claude/agents/`:
+| Agente | Responsabilidad |
+| --- | --- |
+| `orchestrator` | Clasifica READ-ONLY, BUILD, SDD-LITE o SDD-ADVANCED y coordina |
+| `spec` | Prepara una especificación en borrador, sin aprobarla |
+| `developer` | Implementa únicamente dentro de la ruta y alcance autorizados |
+| `reviewer` | Revisa código, pruebas y conformidad con la tarea/spec |
+| `product` | Guía la UAT funcional **asistida**, con evidencia y decisión humana; no publica |
 
-| Agente | Rol |
-|---|---|
-| `orchestrator` | Decide si el pedido es **build** (cambio pequeño y claro) o **SDD**, planifica y coordina a los demás, en paralelo cuando las tareas no comparten archivos |
-| `spec` | Escribe la spec en `docs/specs/<module>-<feature>.md`, con un plan de tareas que cabe en una sesión |
-| `developer` | Implementa una spec aprobada o un cambio en modo build, con sus tests |
-| `reviewer` | Revisa contra la spec y `docs/SETUP.md`; devuelve observaciones hasta aprobar |
+Iniciar el flujo de desarrollo con:
 
-Para usarlo:
-
-```sh
+```bash
 claude --agent orchestrator
 ```
 
-y describe la funcionalidad que quieres.
+Para una especificación SDD, el aprobador debe escribir exactamente `apruebo docs/specs/<slug>.md` **y además firmar desde su propia terminal la declaración generada por el hook**, verificando la firma SSH. El comando en el chat o la firma HMAC del registro **no bastan**. Las rutas de gobierno requieren adicionalmente `autorizo gobierno docs/specs/<slug>.md` y su firma de gobierno, dentro del alcance y sesión correspondientes. El `gate` es quien determina si la aprobación es utilizable. No importar firmas, registros de aprobación ni claves privadas de la plantilla a proyectos derivados.
 
-### Aprobación de specs
+Revisa [`docs/SETUP.md`, sección 3](docs/SETUP.md) y [`CLAUDE.md`](CLAUDE.md) para instrucciones precisas. **No se modifican hooks ni reglas de gobierno por esta actualización documental.**
 
-Ninguna spec se implementa sin tu aprobación. Cuando el orquestador te muestre la spec, apruébala escribiendo en el chat:
+## Control de cambios y entrega
 
-```
-apruebo docs/specs/<slug>.md
-```
+El flujo recomendado es: **rama de trabajo → PR → Reviewer → CI (`checks` + `audit`) → decisión humana de merge → sincronización de `main` local**. La plantilla de PR está en [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md).
 
-Un hook cambia la spec de `Estado: borrador` a `Estado: aprobado`, registra quién aprobó en `docs/specs/approvals.jsonl` (con una firma cuya clave se guarda en `~/.claude/spec-approval.key`) y Claude continúa con la implementación.
+> **Estado de control al preparar esta propuesta (24/11/2026):** GitHub reporta `main` sin protección automática. Mientras siga así, las revisiones y checks constituyen un **control operativo** y no impiden técnicamente un push directo. Una rama protegida requiere configuración administrativa y disponibilidad del plan de GitHub.
 
-Bloqueos técnicos (`.claude/settings.json` y `.claude/hooks/spec-approval.mjs`):
+La propuesta de primera entrega y sus límites se documentan en [`docs/RELEASE-v0.1.0-PROPUESTA.md`](docs/RELEASE-v0.1.0-PROPUESTA.md). No publicar una GitHub Release ni afirmar «apto para producción» sin verificar su evidencia y obtener autorización del propietario.
 
-- Solo tu mensaje en el chat puede aprobar una spec; Claude solo puede escribirlas con `Estado: borrador`.
-- El agente `developer` no se lanza si la spec no está aprobada o cambió después de aprobarse.
-- El `developer` no puede modificar nada en `docs/specs/`.
-- Las aprobaciones son por equipo: una spec aprobada en otra máquina hay que aprobarla de nuevo en la tuya.
-
-Tests de los hooks: `npx vitest run .claude/hooks`.
-
-## Skills recomendadas
+## Skills recomendadas (opcionales)
 
 Plugins y skills de Claude Code que complementan esta plantilla. Los comandos con `/plugin` se escriben dentro de Claude Code; reinicia la sesión después de instalar.
 
 | Skill | Para qué | Instalación |
 |---|---|---|
-| [**frontend-design**](https://github.com/anthropics/claude-plugins-official) (Anthropic) | Interfaces con diseño cuidado en vez del aspecto genérico de IA. Se activa sola al pedir pantallas o componentes. | `/plugin install frontend-design@claude-plugins-official` |
-| [**ui-ux-pro-max**](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) | Base de datos de estilos, paletas, tipografías y guías de UX para elegir el diseño de un producto. | `/plugin marketplace add nextlevelbuilder/ui-ux-pro-max-skill`<br>`/plugin install ui-ux-pro-max@ui-ux-pro-max-skill` |
-| [**vercel-labs/agent-skills**](https://github.com/vercel-labs/agent-skills) | Buenas prácticas de React y Next.js de Vercel (rendimiento, waterfalls, bundle, re-renders). Encaja con el stack de la plantilla. | `npx skills add vercel-labs/agent-skills` |
-| [**ponytail**](https://github.com/dietrichgebert/ponytail) | Fuerza la solución más simple que funcione: YAGNI, librería estándar antes que dependencias, menos código. Refuerza KISS/YAGNI de `SETUP.md`. | `/plugin marketplace add dietrichgebert/ponytail`<br>`/plugin install ponytail@ponytail` |
-| [**caveman**](https://github.com/JuliusBrussee/caveman) | Respuestas ultracompactas de Claude: menos tokens de salida sin perder precisión técnica. | `/plugin marketplace add JuliusBrussee/caveman`<br>`/plugin install caveman@caveman` |
-| [**superpowers**](https://github.com/obra/superpowers) | Biblioteca de skills de ingeniería: brainstorming, planificación, TDD, depuración sistemática y revisión de código. | `/plugin marketplace add obra/superpowers-marketplace`<br>`/plugin install superpowers@superpowers-marketplace` |
+| [**frontend-design**](https://github.com/anthropics/claude-plugins-official) (Anthropic) | Interfaces con diseño cuidado en vez del aspecto genérico de IA. | `/plugin install frontend-design@claude-plugins-official` |
+| [**ui-ux-pro-max**](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) | Base de estilos, paletas, tipografías y guías UX. | `/plugin marketplace add nextlevelbuilder/ui-ux-pro-max-skill` y `/plugin install ui-ux-pro-max@ui-ux-pro-max-skill` |
+| [**vercel-labs/agent-skills**](https://github.com/vercel-labs/agent-skills) | Buenas prácticas de React/Next.js. | `npx skills add vercel-labs/agent-skills` |
+| [**ponytail**](https://github.com/dietrichgebert/ponytail) | Simplicidad KISS/YAGNI. | `/plugin marketplace add dietrichgebert/ponytail` y `/plugin install ponytail@ponytail` |
+| [**caveman**](https://github.com/JuliusBrussee/caveman) | Respuestas compactas de Claude. | `/plugin marketplace add JuliusBrussee/caveman` y `/plugin install caveman@caveman` |
+| [**superpowers**](https://github.com/obra/superpowers-marketplace) | Planificación, TDD y depuración. | `/plugin marketplace add obra/superpowers-marketplace` y `/plugin install superpowers@superpowers-marketplace` |
 
-Cómo combinarlas:
-
-- **Diseño:** `ui-ux-pro-max` para decidir el estilo y `frontend-design` para construir la interfaz, siempre usando los componentes de shadcn/ui y los tokens del tema de `app/globals.css`.
-- **Código:** `vercel-labs/agent-skills` para el rendimiento de React/Next y `ponytail` para no sobrediseñar.
-- **superpowers** trae su propio flujo de planificación y ejecución. En este proyecto manda el flujo SDD (spec aprobada → developer → reviewer); usa sus skills de TDD y depuración dentro de ese flujo, no como sustituto.
-- **caveman** es opcional: reduce el coste, pero las respuestas son muy telegráficas. Desactívalo cuando necesites explicaciones detalladas.
+Las skills de diseño trabajan sobre shadcn/ui y los tokens existentes. `superpowers` y otras skills **no reemplazan** el proceso SDD, los hooks, Reviewer ni CI.
