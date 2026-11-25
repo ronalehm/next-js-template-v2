@@ -140,31 +140,49 @@ docs/specs/             Especificaciones SDD y evidencia histórica
 
 ## SDD/ODD y cinco agentes
 
-La fuente de verdad de rutas, permisos y autorizaciones es [`docs/SETUP.md`](docs/SETUP.md). Existen **cinco** agentes:
+La fuente normativa del flujo de desarrollo y sus aprobaciones es [`docs/SETUP.md`](docs/SETUP.md). El Template incorpora **cinco agentes**, con responsabilidades diferentes:
 
-| Agente | Responsabilidad |
-| --- | --- |
-| `orchestrator` | Clasifica READ-ONLY, BUILD, SDD-LITE o SDD-ADVANCED y coordina |
-| `spec` | Prepara una especificación en borrador, sin aprobarla |
-| `developer` | Implementa únicamente dentro de la ruta y alcance autorizados |
-| `reviewer` | Revisa código, pruebas y conformidad con la tarea/spec |
-| `product` | Guía la UAT funcional **asistida**, con evidencia y decisión humana; no publica |
+| Agente | Cuándo se utiliza | Qué hace |
+| --- | --- | --- |
+| `orchestrator` | Al recibir la solicitud y para coordinar el cierre | Clasifica READ-ONLY, BUILD, SDD-LITE o SDD-ADVANCED; organiza implementación, revisión y validación |
+| `spec` | Cuando la ruta elegida es SDD | Redacta una especificación en borrador; no la aprueba |
+| `developer` | Con tarea BUILD válida o fase SDD aprobada | Implementa los cambios autorizados y realiza pruebas focalizadas |
+| `reviewer` | Después de la implementación | Revisa requisitos, cambios y pruebas; su APROBADO técnico **no es** aceptación funcional |
+| `product` | **Cuando una funcionalidad necesita UAT, después del gate técnico y de la preparación del entorno** | Guía una prueba funcional a la vez, analiza las evidencias aportadas por Producto y entrega el paquete de resultados al Orchestrator |
 
-Iniciar el flujo de desarrollo con:
+Iniciar trabajo de desarrollo:
 
 ```bash
 claude --agent orchestrator
 ```
 
-Para una especificación SDD, el aprobador debe escribir exactamente `apruebo docs/specs/<slug>.md` **y además firmar desde su propia terminal la declaración generada por el hook**, verificando la firma SSH. El comando en el chat o la firma HMAC del registro **no bastan**. Las rutas de gobierno requieren adicionalmente `autorizo gobierno docs/specs/<slug>.md` y su firma de gobierno, dentro del alcance y sesión correspondientes. El `gate` es quien determina si la aprobación es utilizable. No importar firmas, registros de aprobación ni claves privadas de la plantilla a proyectos derivados.
+En la ruta SDD, el usuario humano debe escribir `apruebo docs/specs/<slug>.md` y firmar desde **su propia terminal** la declaración generada por el hook con una clave SSH admitida. El comando en el chat y el registro HMAC no bastan; el `gate` debe aceptar la aprobación firmada. Los archivos de gobierno requieren adicionalmente `autorizo gobierno docs/specs/<slug>.md` y una firma de gobierno para esa sesión. **No copiar las aprobaciones o firmas históricas del origen al derivado.** Consultar [`docs/SETUP.md` §3](docs/SETUP.md) para el procedimiento exacto.
 
-Revisa [`docs/SETUP.md`, sección 3](docs/SETUP.md) y [`CLAUDE.md`](CLAUDE.md) para instrucciones precisas. **No se modifican hooks ni reglas de gobierno por esta actualización documental.**
+### ¿Cuándo usar el agente `product`?
+
+**Úsalo para validar el resultado funcional de un desarrollo**, antes de la aceptación funcional de Producto y del gate de liberación que corresponda. Algunos ejemplos son registrar/editar usuarios, comprobar permisos de la aplicación o validar una pantalla o flujo modificado. No se utiliza para crear el repositorio, instalar Clerk/Neon, migrar datos, implementar funcionalidades ni sustituir a `reviewer`. Una tarea exclusivamente documental puede recibir la decisión justificada «UAT no aplicable», según `docs/SETUP.md`; esto no elimina la revisión técnica o CI.
+
+El flujo real es:
+
+1. **Desarrollar y revisar.** `orchestrator` coordina la tarea; `developer` implementa y `reviewer` emite el dictamen técnico.
+2. **Preparar la UAT.** Si corresponde validación funcional, `orchestrator` coordina con el Developer un entorno UAT aislado (**EUA**) con datos sintéticos o anonimizados y prepara un **brief** que incluya iniciativa, responsables, casos de prueba, PR/commit o versión exacta, URL, identificación y evidencia de aislamiento Clerk/Neon, y gate de inicio. **Una rama Git por sí sola no identifica la versión probada.** Sin evidencias suficientes de aislamiento, la ronda no comienza.
+3. **Abrir otra sesión de Claude Code** desde el proyecto y ejecutar:
+
+   ```bash
+   claude --agent product
+   ```
+
+   `product` es un **agente principal independiente**: `orchestrator` no lo invoca como subagente. Si no se ha cargado un brief, ofrece tres opciones: **1. Iniciar una nueva validación** (solicita preparación a Orchestrator), **2. Utilizar una validación preparada por Orchestrator** (pegar el brief) o **3. Continuar una validación anterior** (pegar el checkpoint).
+4. **Ejecutar la UAT asistida (E1).** `product` presenta **una prueba por interacción** con acción, resultado esperado y cómo informar el resultado. La persona de Producto ejecuta los pasos autorizados en el EUA y pega la evidencia. `product` la evalúa, sin inventar PASS ni continuar cuando falta evidencia. **Modo DIRECTA (E2) aún no habilitado.**
+5. **Registrar y cerrar el circuito.** Producto entrega el paquete al `orchestrator`; un `developer` autorizado registra los resultados y observaciones en `docs/evidence/<slug>-uat.md`. Orchestrator clasifica y gestiona correcciones o backlog sin abrir un segundo flujo SDD. **Producto acepta o rechaza funcionalmente**; `reviewer` no sustituye esa decisión. La liberación a DEV Beta corresponde a DevOps/Integrador tras su gate, no al agente `product`.
+
+**Referencias únicas de comportamiento:** [`docs/uat/product-agent.md`](docs/uat/product-agent.md) (E1, cards, comandos y paquete), [`docs/SETUP.md` — UAT y cambios solicitados](docs/SETUP.md) (reglas y gates) y [`docs/forms/uat.md`](docs/forms/uat.md) (registro). El agente `product` no escribe código, no inicia servidores, no ejecuta migraciones ni publica en GitHub o Linear.
 
 ## Control de cambios y entrega
 
 El flujo recomendado es: **rama de trabajo → PR → Reviewer → CI (`checks` + `audit`) → decisión humana de merge → sincronización de `main` local**. La plantilla de PR está en [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md).
 
-> **Estado de control al preparar esta propuesta (24/11/2026):** GitHub reporta `main` sin protección automática. Mientras siga así, las revisiones y checks constituyen un **control operativo** y no impiden técnicamente un push directo. Una rama protegida requiere configuración administrativa y disponibilidad del plan de GitHub.
+> **Estado verificado (25/11/2026):** `main` tiene activo el Ruleset `main-protection`: PR obligatorio, una aprobación, checks `checks` y `audit`, bloqueo de eliminación y force push, y actualización frente a `main` antes del merge. Esta protección pertenece al repositorio origen; cada repositorio derivado debe configurar su propia protección.
 
 La propuesta de primera entrega y sus límites se documentan en [`docs/RELEASE-v0.1.0-PROPUESTA.md`](docs/RELEASE-v0.1.0-PROPUESTA.md). No publicar una GitHub Release ni afirmar «apto para producción» sin verificar su evidencia y obtener autorización del propietario.
 
