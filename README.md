@@ -26,15 +26,71 @@ Template V2 PRO (código base y gobierno de desarrollo)
 
 **Requisitos:** Node.js 26.x y npm; `.nvmrc`, `.node-version` y `engines.node` declaran la rama 26. En Windows, utiliza un gestor de versiones compatible con Windows; `nvm` de Linux/macOS no tiene por qué usar los mismos comandos.
 
-## Comenzar un proyecto nuevo
+## Cómo crear un proyecto independiente
 
-1. **Crear el derivado independiente.** Aplicar el procedimiento validado de Bootstrap B1 o el agente de replicación autorizado por el propietario. Este README no reemplaza el manual B1. Comprobar identidad propia y repositorio Git independiente **antes de enlazar un remoto de proyecto**. Atención: `git clone https://github.com/ronalehm/next-js-template-v2.git` por sí solo conserva el historial y configura `origin` hacia la plantilla; no completa el aislamiento del derivado.
-2. **Preparar el entorno aislado.** Crear una instancia de Clerk Development y un proyecto o rama Neon destinados exclusivamente al derivado. No reutilizar recursos ni datos del repositorio origen ni de otros proyectos.
-3. **Configurar y validar.** Seguir [`docs/INSTALACION.md`](docs/INSTALACION.md) para `.env.local`, destinos efectivos, migraciones y primer superadministrador.
-4. **Verificar.** Ejecutar las comprobaciones funcionales, documentar los resultados y aprobar las operaciones sensibles conforme a [`docs/SETUP.md`](docs/SETUP.md).
-5. **Desarrollar con PR.** Utilizar la rama propia del proyecto y el flujo Reviewer → CI → revisión humana. Cada derivado decide y documenta su propio despliegue y gobierno.
+**Objetivo:** obtener un repositorio propio, con identidad, gobierno SDD, instancia Clerk, base Neon y posterior despliegue independientes. No basta con ejecutar `git clone` sobre el repositorio de origen: ese comando deja `origin` apuntando a Template V2 PRO y conserva su historial.
 
-**Nota de documentación:** el manual B1 v1.2 y el agente de replicación fueron comunicados como validados por el propietario, pero sus archivos/versiones aún deben incorporarse o referenciarse mediante una ubicación estable antes de declarar completo el paquete documental de entrega.
+### Paso 1. Crear el repositorio del proyecto
+
+**Ruta validada por el propietario:** utilizar el agente de replicación aislada ya probado o el procedimiento manual **Bootstrap B1 v1.2**. Sus nombres, comandos y evidencia deben enlazarse desde una ubicación estable antes de declararlos incluidos en una Release; este README no inventa una invocación del agente ni sustituye el manual.
+
+**Ruta nativa de GitHub (alternativa):** este repositorio tiene habilitado **Use this template**.
+
+1. Abrir [Template V2 PRO](https://github.com/ronalehm/next-js-template-v2) en GitHub y elegir **Use this template → Create a new repository**.
+2. Seleccionar propietario, nombre y visibilidad del **nuevo** proyecto (por ejemplo, `proyecto-mbc`; mantenerlo privado si corresponde).
+3. Crear el repositorio y clonarlo desde **su nueva URL**, no desde la URL del Template. En PowerShell, desde la carpeta donde guardarás los proyectos:
+
+   ```powershell
+   git clone https://github.com/USUARIO/PROYECTO-NUEVO.git
+   cd PROYECTO-NUEVO
+   git remote -v
+   git branch --show-current
+   ```
+
+   Sustituir `USUARIO/PROYECTO-NUEVO` por el destino real. `origin` debe apuntar **solo al repositorio nuevo**; revisar la identidad del proyecto en `package.json`, `package-lock.json` y el README antes de empezar a desarrollar.
+
+4. **Separar el gobierno histórico del origen antes del primer uso.** `Use this template` crea historial Git propio, **pero copia también archivos del árbol**, incluidas specs, firmas y registros históricos del Template. **No** tratarlos como aprobaciones del proyecto nuevo. Aplicar la cuarentena y configuración de firma propia descritas en Bootstrap B1 v1.2; preservar la evidencia histórica fuera del flujo activo del derivado. La ruta nativa no equivale por sí sola a una instalación B1/B2 validada.
+
+### Paso 2. Crear Clerk exclusivo del proyecto
+
+1. Entrar en [Clerk Dashboard](https://dashboard.clerk.com/) y crear una **aplicación/instancia de Development** para el proyecto nuevo.
+2. En **API Keys**, identificar `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` y `CLERK_SECRET_KEY` **de esa misma instancia**.
+3. Si el proyecto usa el webhook implementado en el Template, configurar el endpoint correspondiente en Clerk y obtener `CLERK_WEBHOOK_SIGNING_SECRET` para **ese** endpoint.
+4. Conservar las claves privadas fuera de Git. No reutilizar una instancia de Clerk del Template, AppMADRE, CRM-IA ni producción.
+
+### Paso 3. Crear Neon exclusivo del proyecto
+
+1. Entrar en [Neon Console](https://console.neon.tech/) y crear preferiblemente **un proyecto Neon nuevo** para el derivado, con la región y la base de datos deseadas.
+2. Identificar y registrar **sin contraseñas** el proyecto, rama, base de datos y hosts previstos para aplicación y migraciones. Una rama llamada `production` dentro de un proyecto Neon aislado **no implica** que se esté usando la base PROD del Template: verificar el ID del proyecto completo.
+3. Copiar la conexión **pooled** (host `-pooler`) a `DATABASE_URL` para la aplicación; copiar la conexión **directa** a `DATABASE_URL_UNPOOLED` para las migraciones y el alta administrativa. Ambas deben señalar el mismo proyecto/rama/base de prueba.
+4. No reutilizar conexiones, credenciales ni datos de otros proyectos.
+
+### Paso 4. Configurar la copia y comprobar el aislamiento
+
+1. Instalar Node.js 26.x y, dentro del nuevo proyecto, ejecutar `npm ci --ignore-scripts`.
+2. Copiar `.env.example` a `.env.local` y colocar las claves **del proyecto nuevo**, nunca en el README ni en un commit.
+3. Verificar que `.env.local` está ignorado y no rastreado por Git; confirmar en la **misma sesión de terminal** las variables efectivas, incluidas variables heredadas que puedan prevalecer.
+4. Cotejar los destinos reales de Clerk, `DATABASE_URL` y `DATABASE_URL_UNPOOLED` con sus paneles **antes de conectar, migrar o conceder roles**. Los scripts actuales usan `DATABASE_URL_UNPOOLED || DATABASE_URL`: si falta la primera, recurren a la segunda. No ejecutar en caso de duda.
+
+La guía con instrucciones y comprobaciones es [`docs/INSTALACION.md`](docs/INSTALACION.md); las autorizaciones están en [`docs/SETUP.md`](docs/SETUP.md).
+
+### Paso 5. Instalar y validar funcionalmente (solo en el entorno aislado)
+
+Una vez confirmados los destinos y obtenidas las autorizaciones aplicables:
+
+```bash
+npm run db:migrate
+npm run db:grant-superadmin -- CORREO-DE-PRUEBA
+npm run dev
+```
+
+Reemplazar `CORREO-DE-PRUEBA` por un correo realmente controlado en la instancia Clerk del derivado. Comprobar en `localhost` el inicio de sesión, que las migraciones se aplicaron **solo** a Neon de prueba y que el superadministrador tiene acceso administrativo mientras que un usuario normal no lo tiene. No copiar cuentas, secretos ni aprobaciones del origen.
+
+### Paso 6. Trabajar y desplegar con identidad propia
+
+Crear ramas y PR **en el repositorio nuevo**, ejecutar Reviewer y CI, obtener las aprobaciones del proyecto y configurar Vercel/Cloudflare por entorno cuando corresponda. El despliegue es una etapa distinta de la instalación local. Para más detalles y requisitos de seguridad consulta [`docs/INSTALACION.md`](docs/INSTALACION.md) y el gobierno vigente de `main` del repositorio receptor.
+
+**Pendiente de documentación de entrega:** incorporar el enlace verificable al manual B1 v1.2, el identificador/invocación del agente replicador y las evidencias de B2 y despliegue. Esos artefactos fueron reportados como probados por el propietario, pero este README no los presenta como archivos versionados cuando no lo están.
 
 ## Arranque de una copia ya independizada
 
